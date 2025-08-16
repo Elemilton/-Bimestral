@@ -15,7 +15,7 @@
     aside{background:linear-gradient(180deg,#0f172a,#0b1224);border:1px solid #1f2a44;border-radius:var(--radius);padding:16px;overflow:auto}
     .panel{display:grid;gap:10px}
     label{font-size:12px;color:var(--muted)}
-    select,input[type="text"],input[type="number"],button{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #22304d;background:#0b1327;color:var(--text)}
+    select,input[type="text"],input[type="number"],button{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #22304d;background:#0b1327;color:#e2e8f0}
     button{cursor:pointer;font-weight:700;background:linear-gradient(180deg,#0ea5e9,#0284c7);border:1px solid #0ea5e9}
     button.secondary{background:#101a33;border-color:#22304d}
     .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -27,8 +27,16 @@
     a{color:#7dd3fc;text-decoration:none}
     .ok{color:#34d399}.warn{color:#f59e0b}.err{color:#ef4444}
     @media (max-width: 960px){main{grid-template-columns:1fr}} 
+    details{border:1px dashed #2b3c60;border-radius:12px;padding:10px;margin-top:8px}
+    summary{cursor:pointer;color:#e2e8f0}
+    code,kbd{background:#0b1327;border:1px solid #22304d;border-radius:6px;padding:2px 6px;color:#cbd5e1}
   </style>
-  <!-- Removemos scripts diretos e passamos a carregar com fallback dinâmico (evita "XLSX is not defined") -->
+  <noscript>
+    <style>main{display:none}</style>
+    <div style="padding:16px;color:#e2e8f0;background:#0b1020;font:500 15px ui-sans-serif">
+      Este dashboard precisa de JavaScript habilitado.
+    </div>
+  </noscript>
 </head>
 <body>
   <header>
@@ -62,6 +70,19 @@
         <button id="btnPort">Gráfico pronto: Português (%≥6 por turma)</button>
         <button id="btnCompare">Comparar Matemática × Português (%≥6)</button>
         <button id="btnTests" class="secondary">Rodar testes</button>
+        <details id="installHelp" open hidden>
+          <summary>Como resolver quando os CDNs estão bloqueados (instalar libs localmente)</summary>
+          <ol>
+            <li>Crie a pasta <code>vendor/</code> na raiz do repositório.</li>
+            <li>Baixe estes arquivos e coloque dentro de <code>vendor/</code>:
+              <ul>
+                <li><code>xlsx.full.min.js</code> – <a href="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js">jsDelivr</a> / <a href="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.2/xlsx.full.min.js">cdnjs</a> / <a href="https://unpkg.com/xlsx@0.20.2/dist/xlsx.full.min.js">unpkg</a></li>
+                <li><code>plotly-2.35.2.min.js</code> – <a href="https://cdn.plot.ly/plotly-2.35.2.min.js">plotly</a> / <a href="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js">cdnjs</a></li>
+              </ul>
+            </li>
+            <li>Faça commit e publique no GitHub Pages. O app vai priorizar <code>vendor/</code> (mesma origem) e só usará CDNs como fallback.</li>
+          </ol>
+        </details>
         <hr style="border-color:#1f2a44;opacity:.6" />
         <div class="footer">
           <strong>Como publicar:</strong>
@@ -87,22 +108,20 @@
   const state = { wb: null, dataBySheet: {}, columns: [] };
 
   // ===== Utilidades de status =====
-  function tag(msg, ok=true){
-    const span = document.createElement('span');
-    span.className = 'badge';
-    span.style.borderColor = ok ? '#1fa37f' : '#ef4444';
-    span.textContent = msg; return span;
-  }
-  function setStatus(msg, ok=true){ const box = $('status'); box.innerHTML=''; box.appendChild(tag(msg, ok)); }
-  function pushStatus(msg, ok=true){ const box = $('status'); box.appendChild(tag(msg, ok)); }
+  function tag(msg, ok=true){ const span=document.createElement('span'); span.className='badge'; span.style.borderColor= ok ? '#1fa37f' : '#ef4444'; span.textContent=msg; return span; }
+  function setStatus(msg, ok=true){ const box=$('status'); box.innerHTML=''; box.appendChild(tag(msg, ok)); }
+  function pushStatus(msg, ok=true){ const box=$('status'); box.appendChild(tag(msg, ok)); }
 
-  // ===== Loader com fallback de CDN (corrige XLSX is not defined) =====
-  const XLSX_URLS = [
+  // ===== Preferir bibliotecas locais (vendor/) e só então CDNs =====
+  const XLSX_LOCAL = [ 'vendor/xlsx.full.min.js' ];
+  const PLOTLY_LOCAL = [ 'vendor/plotly-2.35.2.min.js', 'vendor/plotly.min.js' ];
+
+  const XLSX_CDN = [
     'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js',
     'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.2/xlsx.full.min.js',
     'https://unpkg.com/xlsx@0.20.2/dist/xlsx.full.min.js'
   ];
-  const PLOTLY_URLS = [
+  const PLOTLY_CDN = [
     'https://cdn.plot.ly/plotly-2.35.2.min.js',
     'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js',
     'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js'
@@ -118,27 +137,49 @@
     });
   }
 
-  async function loadWithFallback(name, urls){
+  async function loadFromList(name, urls, local=false){
     for(const u of urls){
-      try{ await loadScript(u); pushStatus(name+': ok via '+(new URL(u)).hostname, true); return; }
-      catch(e){ pushStatus(name+': falhou '+(new URL(u)).hostname, false); }
+      try{ await loadScript(u); pushStatus(`${name}: ok via ${local? 'local ' : ''}`+(new URL(u, location.href)).hostname, true); return true; }
+      catch(e){ pushStatus(`${name}: falhou `+(new URL(u, location.href)).hostname, false); }
     }
-    throw new Error('Não foi possível carregar '+name+' de nenhum CDN');
+    return false;
   }
 
-  // ===== Funções de planilha =====
+  async function ensureLibs(){
+    setStatus('Carregando bibliotecas…');
+    const xLocal = await loadFromList('XLSX', XLSX_LOCAL, true);
+    const pLocal = await loadFromList('Plotly', PLOTLY_LOCAL, true);
+
+    // Se local não existir, tenta CDN
+    if(!xLocal){
+      const xCdn = await loadFromList('XLSX', XLSX_CDN, false);
+      if(!xCdn){
+        setStatus('Falha na inicialização: não foi possível carregar XLSX (vendor/ ou CDN).', false);
+        $('installHelp').hidden = false; // mostra instruções para copiar libs para vendor/
+        throw new Error('Sem XLSX');
+      }
+    }
+    if(!pLocal){
+      const pCdn = await loadFromList('Plotly', PLOTLY_CDN, false);
+      if(!pCdn){
+        setStatus('Falha: não foi possível carregar Plotly (vendor/ ou CDN).', false);
+        $('installHelp').hidden = false;
+        throw new Error('Sem Plotly');
+      }
+    }
+    setStatus('Bibliotecas carregadas', true);
+  }
+
+  // ===== Planilha =====
   function normalizeMultiHeader(ws){
     const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:true, defval:null });
     if(rows.length < 3) return null;
-    const top = rows[0];
-    const sub = rows[1];
-    const headers = [];
+    const top = rows[0]; const sub = rows[1]; const headers = [];
     for(let c=0;c<Math.max(top.length, sub.length);c++){
-      const A = top[c], B = sub[c];
-      let name = A && B ? `${A}|${B}` : (A || B || `col_${c}`);
-      headers.push(String(name).trim());
+      const A = top[c], B = sub[c]; let name = A && B ? `${A}|${B}` : (A || B || `col_${c}`); headers.push(String(name).trim());
     }
-    const body = rows.slice(2).filter(r => r.some(v => v!==null && v!==''))
+    const body = rows.slice(2)
+      .filter(r => r.some(v => v!==null && v!==''))
       .map(r => Object.fromEntries(headers.map((h,i)=>[h, r[i] ?? null])));
     return { headers, body };
   }
@@ -152,7 +193,7 @@
   }
 
   function guessColumns(rows){ const cols = new Set(); rows.forEach(r => Object.keys(r).forEach(k => cols.add(k))); return Array.from(cols); }
-  function pickX(rows){ const prefer=["Turma","Bimestre","Bimestres","Série","Classe"]; for(const k of prefer){ if(rows.length && (k in rows[0])) return k; } return rows.length?Object.keys(rows[0])[0]:null; }
+  function pickX(rows){ const prefer=['Turma','Bimestre','Bimestres','Série','Classe']; for(const k of prefer){ if(rows.length && (k in rows[0])) return k; } return rows.length?Object.keys(rows[0])[0]:null; }
 
   function plotCustom(sheetName, yCol){
     const rows = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
@@ -162,7 +203,6 @@
     const layout = { title: yCol, barmode:'group', font:{color:'#e2e8f0'}, paper_bgcolor:'transparent', plot_bgcolor:'transparent', xaxis:{gridcolor:'#1f2a44'}, yaxis:{gridcolor:'#1f2a44'} };
     Plotly.newPlot('chartHost', [trace], layout, {responsive:true, displaylogo:false});
   }
-
   function plotCompare(sheetName, yColA, yColB){
     const rows = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
     const xKey = pickX(rows); if(!xKey) return alert('Não encontrei coluna para eixo X.');
@@ -183,31 +223,19 @@
 
   async function fetchXlsx(path){ const res = await fetch(path); if(!res.ok) throw new Error('Não foi possível carregar o arquivo: '+res.status+' '+path); return await res.arrayBuffer(); }
 
-  // ===== Testes automáticos (adição solicitada) =====
+  // ===== Testes =====
   function runTests(){
     const results = [];
-    try{ results.push(['XLSX disponível', !!window.XLSX]); }catch{ results.push(['XLSX disponível', false]); }
-    try{ results.push(['Plotly disponível', !!window.Plotly]); }catch{ results.push(['Plotly disponível', false]); }
-    // Teste prático: cria uma planilha simples e valida leitura
-    try{
-      const aoa = [['Nome','Nota'],['Ana',9],['Beto',7]];
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const json = XLSX.utils.sheet_to_json(ws, {defval:null});
-      const ok = Array.isArray(json) && json.length===2 && json[0].Nome==='Ana' && json[1].Nota===7;
-      results.push(['sheet_to_json funciona', ok]);
-    }catch(e){ results.push(['sheet_to_json funciona', false]); }
-    // Exibe
-    const okAll = results.every(r=>r[1]);
-    setStatus('Testes: '+results.map(r=>`${r[0]}=${r[1]?'OK':'ERRO'}`).join(' | '), okAll);
-    console.table(Object.fromEntries(results));
+    results.push(['XLSX disponível', !!window.XLSX]);
+    results.push(['Plotly disponível', !!window.Plotly]);
+    try{ const aoa=[["Nome","Nota"],["Ana",9],["Beto",7]]; const ws=XLSX.utils.aoa_to_sheet(aoa); const json=XLSX.utils.sheet_to_json(ws,{defval:null}); const ok=Array.isArray(json)&&json.length===2&&json[0].Nome==='Ana'&&json[1].Nota===7; results.push(['sheet_to_json funciona', ok]); }catch{ results.push(['sheet_to_json funciona', false]); }
+    const okAll = results.every(r=>r[1]); setStatus('Testes: '+results.map(r=>`${r[0]}=${r[1]?'OK':'ERRO'}`).join(' | '), okAll); console.table(Object.fromEntries(results));
   }
 
   // ===== Inicialização =====
   async function boot(){
     try{
-      setStatus('Carregando bibliotecas…');
-      await Promise.all([ loadWithFallback('XLSX', XLSX_URLS), loadWithFallback('Plotly', PLOTLY_URLS) ]);
-      setStatus('Bibliotecas carregadas', true);
+      await ensureLibs();
       runTests();
       // Eventos UI
       $('btnLoad').addEventListener('click', async ()=>{ try{ const buf=await fetchXlsx($('xlsxPath').value.trim()); readWorkbook(new Uint8Array(buf)); setStatus('Arquivo carregado com sucesso', true);}catch(e){ setStatus(e.message,false); alert(e.message);} });
@@ -220,7 +248,7 @@
       $('btnTests').addEventListener('click', runTests);
       // Auto-carregar do repositório
       try{ const buf=await fetchXlsx($('xlsxPath').value.trim()); readWorkbook(new Uint8Array(buf)); setStatus('Auto-carregado a planilha do repositório', true); }catch(e){ setStatus('Auto-load falhou: '+e.message, false); }
-    }catch(e){ setStatus('Falha na inicialização: '+e.message, false); console.error(e); }
+    }catch(e){ /* ensureLibs já sinaliza status e mostra instrução */ console.error(e); }
   }
 
   document.addEventListener('DOMContentLoaded', boot);
