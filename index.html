@@ -279,7 +279,7 @@ function aggregateBySubject(rows, subject, bimKey, classKey, selectedBimsSet, cl
   return { 'M<5':sumB1, '5≤M<6':sumB2, 'M≥6':sumB3, '%<5':perc1, '5≤%<6':perc2, '%≥6':perc3 };
 }
 
-// ================= Plot (com offset por série, legenda no rodapé e anotação das turmas) =================
+// ================= Plot (offset por série, espaçamentos maiores e sem borda) =================
 function plotMultiByDiscipline(){
   const rowsAll = state.dataBySheet[state.sheet];
   if(!rowsAll) return alert('Planilha não carregada.');
@@ -302,7 +302,10 @@ function plotMultiByDiscipline(){
   const nSeries =
     seriesLeft.filter(s => state.seriesFilter[s]).length +
     seriesRight.filter(s => state.seriesFilter[s]).length || 1;
-  const BAR_WIDTH = Math.min(0.8 / nSeries, 0.22);
+
+  // 🔽 barras mais finas
+  const BAR_WIDTH = Math.min(0.55 / nSeries, 0.11);
+
   let groupIndex = 0;
   const nextGroup = () => String(groupIndex++);
 
@@ -320,7 +323,7 @@ function plotMultiByDiscipline(){
       offsetgroup: nextGroup(),
       alignmentgroup: 'all',
       width: BAR_WIDTH,
-      marker:{ opacity:0.85, color: COLORS[sName] },
+      marker:{ opacity:0.85, color: COLORS[sName], line:{width:0} }, // sem borda
       text: y.map(fmtCount),
       textposition: 'outside',
       cliponaxis: false,
@@ -336,7 +339,7 @@ function plotMultiByDiscipline(){
       aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName]
     );
 
-    let marker = { opacity:0.95, color: COLORS[sName] };
+    let marker = { opacity:0.95, color: COLORS[sName], line:{width:0} }; // sem borda
     if (sName === '%≥6' && g != null) {
       marker.color = y.map(v => (v >= g ? COLORS['%≥6'] : '#64748b'));
     }
@@ -372,7 +375,10 @@ function plotMultiByDiscipline(){
   const layout = {
     title: { text: `Bimestres: ${selectedBims.join(', ')}`, x:0.5, xanchor:'center', pad:{t:6} },
     barmode: state.barmode,
-    bargap: 0.25,
+    // 🔽 espaçamento extra entre grupos e, principalmente, entre barras do mesmo grupo
+    bargap: 0.30,
+    bargroupgap: 0.35,
+
     font:{ color:'#e2e8f0' },
     paper_bgcolor:'transparent', plot_bgcolor:'transparent',
     hovermode:'x unified',
