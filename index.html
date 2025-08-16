@@ -29,8 +29,8 @@
     .warn{color:#f59e0b}
     @media (max-width: 960px){main{grid-template-columns:1fr}} 
   </style>
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js" defer></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js"></script>
 </head>
 <body>
   <header>
@@ -77,6 +77,7 @@
     </aside>
 
     <section id="chart">
+      <div class="toolbar" id="status" style="margin:8px 0 0 8px"></div>
       <div id="chartHost" style="width:100%;height:100%"></div>
     </section>
   </main>
@@ -114,6 +115,10 @@
       opt.value = name; opt.textContent = name; if(idx===0) opt.selected = true; sheetSel.appendChild(opt);
     });
     onSheetChange();
+    // auto plot Matemática por padrão
+    if(wb.SheetNames.length){
+      setTimeout(()=>plotCustom(wb.SheetNames[0], 'Matemática|%≥6'), 500);
+    }
   }
 
   function sheetToJSON(name){
@@ -138,9 +143,9 @@
 
   function onSheetChange(){
     const name = $('sheet').value;
+    if(!name) return;
     const rows = state.dataBySheet[name] || sheetToJSON(name);
-    const cols = guessColumns(rows);
-    state.columns = cols;
+    state.columns = guessColumns(rows);
   }
 
   async function fetchXlsx(path){
@@ -150,16 +155,15 @@
   }
 
   function pickX(rows){
-    const prefer = ["Turma","Bimestre","Bimestres","Série","Classe"]; // tenta achar a melhor coluna categórica
+    const prefer = ["Turma","Bimestre","Bimestres","Série","Classe"];
     for(const key of prefer){ if(rows.length && key in rows[0]) return key; }
-    // fallback: primeira chave
     return rows.length ? Object.keys(rows[0])[0] : null;
   }
 
   function plotCustom(sheetName, yCol){
     const rows = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
     const xKey = pickX(rows);
-    if(!xKey) return alert('Não encontrei coluna categórica para o eixo X (ex.: Turma/Bimestre).');
+    if(!xKey) return;
     const x = rows.map(r => r[xKey]);
     const y = rows.map(r => Number(r[yCol]));
     const trace = { type:'bar', x, y, name: yCol };
@@ -170,7 +174,7 @@
   function plotCompare(sheetName, yColA, yColB){
     const rows = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
     const xKey = pickX(rows);
-    if(!xKey) return alert('Não encontrei coluna categórica para o eixo X (ex.: Turma/Bimestre).');
+    if(!xKey) return;
     const x = rows.map(r => r[xKey]);
     const yA = rows.map(r => Number(r[yColA]));
     const yB = rows.map(r => Number(r[yColB]));
@@ -181,6 +185,13 @@
     const layout = { title: `${yColA} × ${yColB}`, barmode:'group', font:{color:'#e2e8f0'}, paper_bgcolor:'transparent', plot_bgcolor:'transparent', xaxis:{gridcolor:'#1f2a44'}, yaxis:{gridcolor:'#1f2a44'} };
     Plotly.newPlot('chartHost', traces, layout, {responsive:true, displaylogo:false});
   }
+
+  window.addEventListener('load', async () => {
+    try{
+      const buf = await fetchXlsx($('xlsxPath').value.trim());
+      readWorkbook(toArray(buf));
+    }catch(err){ console.error(err.message); }
+  });
 
   $('btnLoad').addEventListener('click', async () => {
     try{
@@ -203,6 +214,36 @@
   });
   $('btnCompare').addEventListener('click',()=>{
     const sheet = $('sheet').value; plotCompare(sheet, 'Matemática|%≥6', 'Português|%≥6');
+  });
+  // Auto-load ao abrir a página para já popular a lista de abas
+  window.addEventListener('load', async () => {
+    try{
+      const path = document.getElementById('xlsxPath').value.trim();
+      const res = await fetch(path);
+      if(!res.ok) throw new Error('HTTP '+res.status+' ao buscar '+path);
+      const buf = await res.arrayBuffer();
+      const arr = new Uint8Array(buf);
+      const wb = XLSX.read(arr, { type: 'array' });
+      // Reutiliza funções existentes
+      const evt = new CustomEvent('autoload-start');
+      window.dispatchEvent(evt);
+      const sheetSel = document.getElementById('sheet');
+      sheetSel.innerHTML = '';
+      wb.SheetNames.forEach((name, idx) => {
+        const opt = document.createElement('option');
+        opt.value = name; opt.textContent = name; if(idx===0) opt.selected = true; sheetSel.appendChild(opt);
+      });
+      // armazena wb em state
+      if(window.state){ window.state.wb = wb; } // fallback se state não for global
+      // tenta usar a função existente se disponível
+      if(typeof onSheetChange==='function'){ onSheetChange(); }
+      const status = document.getElementById('status');
+      if(status){ status.innerHTML = '<span class="badge">Auto-carregado: '+path+'</span>'; }
+    }catch(e){
+      const status = document.getElementById('status');
+      if(status){ status.innerHTML = '<span class="badge" style="border-color:#ef4444">Auto-load falhou: '+e.message+'</span>'; }
+      console.warn('Auto-load falhou:', e);
+    }
   });
 })();
 </script>
