@@ -15,13 +15,14 @@
     label{font-size:12px;color:var(--muted)}
     select,input[type="number"],button{width:100%;padding:9px 10px;border-radius:10px;border:1px solid #264161;background:#0b1b34;color:var(--text)}
     select[multiple]{height:220px} /* padrão para listas grandes */
-    #bimSelect{height:auto}        /* deixa a de Bimestres compacta (usa o size) */
+    #bimSelect{height:auto}        /* Bimestres usa "size" e fica compacto */
     button{cursor:pointer;background:var(--brand);border-color:#0ea5e9;font-weight:600}
     button.tiny{padding:4px 8px;border-radius:8px;background:#1e293b;border:1px solid #475569;font-size:12px}
     .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
     .stack{display:grid;gap:8px}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap}
-    #chartHost{width:100%;height:560px;margin:0 auto;border:1px solid var(--stroke);border-radius:12px;background:linear-gradient(180deg,#0f172a,#0b1325)}
+    .charts{display:grid;gap:18px}
+    .chartBox{width:100%;height:560px;margin:0 auto;border:1px solid var(--stroke);border-radius:12px;background:linear-gradient(180deg,#0f172a,#0b1325)}
     .toolbar.compact label{display:flex;align-items:center;gap:6px;background:transparent;padding:4px 6px;border-radius:6px;border:1px solid #364156}
     .toolbar.compact input{width:auto}
     .label-actions{display:flex;align-items:center;justify-content:space-between}
@@ -54,7 +55,7 @@
           </span>
         </div>
         <!-- size controla a altura; o CSS #bimSelect{height:auto} deixa compacto -->
-        <select id="bimSelect" multiple size="6"></select>
+        <select id="bimSelect" multiple size="4"></select>
       </div>
 
       <div class="row">
@@ -115,21 +116,16 @@
       </div>
     </aside>
 
-    <section id="chartHost"></section>
+    <!-- onde vão o TOTAL + 1 gráfico por turma -->
+    <section id="chartArea" class="charts"></section>
   </main>
 
 <script>
 // ================= Config & Paleta =================
 const LABEL_MIN_PCT = 0.08; // rótulo só em %≥6 >= 8%
-
-// cores fixas por faixa
 const COLORS = {
-  'M<5'   : '#ef4444',   // vermelho
-  '5≤M<6' : '#f59e0b',   // âmbar
-  'M≥6'   : '#22c55e',   // verde
-  '%<5'   : '#fca5a5',   // vermelho claro
-  '5≤%<6' : '#fbbf24',   // âmbar claro
-  '%≥6'   : '#16a34a'    // verde forte (destacado por meta)
+  'M<5'   : '#ef4444', '5≤M<6' : '#f59e0b', 'M≥6'   : '#22c55e',
+  '%<5'   : '#fca5a5', '5≤%<6' : '#fbbf24', '%≥6'   : '#16a34a'
 };
 
 // ================= Estado =================
@@ -137,9 +133,7 @@ const state = {
   wb:null, sheet:null, dataBySheet:{}, columns:[],
   barmode:'group', goal:null, lastPlot:null,
   seriesFilter: { 'M<5': false, '5≤M<6': false, 'M≥6': true, '%<5': false, '5≤%<6': false, '%≥6': true },
-  selectedBims: [],         // multi bimestres
-  selectedClasses: [],      // multi turmas
-  selectedDiscs: []         // multi disciplinas
+  selectedBims: [], selectedClasses: [], selectedDiscs: []
 };
 
 const $ = (id)=>document.getElementById(id);
@@ -152,7 +146,6 @@ const saveState = ()=>{
     bims: state.selectedBims, classes: state.selectedClasses, discs: state.selectedDiscs
   };
   localStorage.setItem('dashboard@prefs', JSON.stringify(payload));
-  console.log('[saveState]', payload);
 };
 const loadState = ()=>{ try{ return JSON.parse(localStorage.getItem('dashboard@prefs')||'{}'); }catch{ return {}; } };
 
@@ -162,12 +155,11 @@ function toNumber(val, isPercent=false){
   if(typeof val==='number') return isPercent? (val>1? val/100: val) : val;
   let s = String(val).trim(); if(!s) return NaN;
   const perc = /%/.test(s) || isPercent; s = s.replace(/%/g,'').replace(/\./g,'').replace(/,/g,'.');
-  let n = Number(s);
-  return Number.isNaN(n) ? NaN : (perc ? (n>1? n/100 : n) : n);
+  const n = Number(s); return Number.isNaN(n) ? NaN : (perc ? (n>1? n/100 : n) : n);
 }
 function uniqueValues(rows, key){
   const set=new Set();
-  for(const r of rows){ const v=r[key]; if(v!=null && String(v).trim()!=='') set.add(String(v)); }
+  rows.forEach(r=>{ const v=r[key]; if(v!=null && String(v).trim()!=='') set.add(String(v)); });
   return Array.from(set);
 }
 function filterValidRows(rows, k){
@@ -183,7 +175,6 @@ function sheetToJSON(sheetName){
     .filter(r => r.some(v => v!==null && v!==''))
     .map(r => Object.fromEntries(header.map((k,i)=>[k, r[i] ?? null])));
   state.dataBySheet[sheetName] = body; state.columns = header;
-  console.log('[sheetToJSON] header:', header, 'rows:', body.length);
   return body;
 }
 function getKeys(){
@@ -192,12 +183,9 @@ function getKeys(){
   return { bimKey, classKey };
 }
 function detectSubjects(){
-  const subj = new Set();
-  for(const col of state.columns){
-    const [left, right] = String(col).split('|');
-    if(left && right) subj.add(left.trim());
-  }
-  return Array.from(subj);
+  const s = new Set();
+  state.columns.forEach(col => { const [l, r] = String(col).split('|'); if(l && r) s.add(l.trim()); });
+  return Array.from(s);
 }
 function resolveCol(subject, kind){
   const norm = s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,'').toLowerCase();
@@ -214,20 +202,12 @@ function resolveCol(subject, kind){
   }
   return null;
 }
-// sumariza listas longas para anotar no gráfico
 function summarizeList(arr, maxLen=80){
   if(!arr || !arr.length) return 'Todas';
-  const s = arr.join(', ');
-  if(s.length <= maxLen) return s;
-  const out = [];
-  let used = 0;
-  for(const v of arr){
-    const add = (out.length?2:0) + v.length;
-    if(used + add > maxLen) break;
-    out.push(v); used += add;
-  }
-  const rest = arr.length - out.length;
-  return out.join(', ') + ` … (+${rest})`;
+  const s = arr.join(', '); if(s.length<=maxLen) return s;
+  const out=[]; let used=0;
+  for(const v of arr){ const add=(out.length?2:0)+v.length; if(used+add>maxLen) break; out.push(v); used+=add; }
+  return out.join(', ') + ` … (+${arr.length-out.length})`;
 }
 
 // ================= Agregação =================
@@ -249,7 +229,7 @@ function aggregateBySubject(rows, subject, bimKey, classKey, selectedBimsSet, cl
   let sumQ=0,sumB1=0,sumB2=0,sumB3=0;
   let cntP1=0,cntP2=0,cntP3=0,avgP1=0,avgP2=0,avgP3=0;
 
-  for(const r of filtered){
+  filtered.forEach(r=>{
     const q  = toNumber(cQ ? r[cQ] : null, false);
     const b1 = toNumber(cB1? r[cB1]: null, false);
     const b2 = toNumber(cB2? r[cB2]: null, false);
@@ -266,7 +246,7 @@ function aggregateBySubject(rows, subject, bimKey, classKey, selectedBimsSet, cl
     if(!Number.isNaN(p1)){ avgP1+=p1; cntP1++; }
     if(!Number.isNaN(p2)){ avgP2+=p2; cntP2++; }
     if(!Number.isNaN(p3)){ avgP3+=p3; cntP3++; }
-  }
+  });
 
   const tot = sumQ>0 ? sumQ : (sumB1+sumB2+sumB3);
   let perc1,perc2,perc3;
@@ -281,145 +261,130 @@ function aggregateBySubject(rows, subject, bimKey, classKey, selectedBimsSet, cl
   return { 'M<5':sumB1, '5≤M<6':sumB2, 'M≥6':sumB3, '%<5':perc1, '5≤%<6':perc2, '%≥6':perc3 };
 }
 
-// ================= Plot (offset, barras finas, espaçamentos, legenda central) =================
-function plotMultiByDiscipline(){
+// ================= Plot helpers (barras finas, gaps, legenda central) =================
+function buildTracesAndLayout({subjects, classSet, selectedBims, headerText}){
   const rowsAll = state.dataBySheet[state.sheet];
-  if(!rowsAll) return alert('Planilha não carregada.');
   const { bimKey, classKey } = getKeys();
 
-  const selectedBims = state.selectedBims;
-  if(!selectedBims.length) return alert('Escolha ao menos um Bimestre.');
-  const selectedDiscs = state.selectedDiscs.length ? state.selectedDiscs : detectSubjects();
-  if(!selectedDiscs.length) return alert('Selecione ao menos uma disciplina.');
-
-  const classSet = new Set(state.selectedClasses.map(String));
-  const bimSet   = new Set(selectedBims.map(String));
-
-  const seriesLeft  = ['M<5','5≤M<6','M≥6'];   // eixo Y (quantidades)
-  const seriesRight = ['%<5','5≤%<6','%≥6'];   // eixo Y2 (percentuais)
-  const x = selectedDiscs.slice();
+  const seriesLeft  = ['M<5','5≤M<6','M≥6'];
+  const seriesRight = ['%<5','5≤%<6','%≥6'];
+  const x = subjects.slice();
   const traces = [];
 
-  // largura/offset por série para evitar sobreposição
   const nSeries =
     seriesLeft.filter(s => state.seriesFilter[s]).length +
     seriesRight.filter(s => state.seriesFilter[s]).length || 1;
 
-  // barras mais finas (e responsivas à quantidade de séries ativas)
   const BAR_WIDTH = Math.min(0.55 / nSeries, 0.11);
-
-  let groupIndex = 0;
-  const nextGroup = () => String(groupIndex++);
+  let groupIndex = 0; const nextGroup = () => String(groupIndex++);
 
   const fmtCount = v => (Number.isFinite(v) ? String(v) : '');
   const fmtPct   = v => (Number.isFinite(v) ? (v * 100).toFixed(1) + '%' : '');
+  const bimSet   = new Set(selectedBims.map(String));
 
-  // Quantidades (Y)
+  // Y (quantidades)
   for (const sName of seriesLeft) {
     if (!state.seriesFilter[sName]) continue;
-    const y = selectedDiscs.map(subj =>
-      aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName] || 0
-    );
+    const y = x.map(subj => aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName] || 0);
     traces.push({
       type:'bar', x, y, name:sName, yaxis:'y',
-      offsetgroup: nextGroup(),
-      alignmentgroup: 'all',
-      width: BAR_WIDTH,
-      marker:{ opacity:0.85, color: COLORS[sName], line:{width:0} }, // sem borda
-      text: y.map(fmtCount),
-      textposition: 'outside',
-      cliponaxis: false,
-      hovertemplate: `%{x}<br>${sName}: %{y:d}<extra></extra>`,
-      showlegend: true
+      offsetgroup: nextGroup(), alignmentgroup:'all', width:BAR_WIDTH,
+      marker:{opacity:0.85,color:COLORS[sName],line:{width:0}},
+      text:y.map(fmtCount), textposition:'outside', cliponaxis:false,
+      hovertemplate:`%{x}<br>${sName}: %{y:d}<extra></extra>`,
+      showlegend:true
     });
   }
 
-  // Percentuais (Y2)
+  // Y2 (percentuais)
   const g = (state.goal != null && !Number.isNaN(state.goal)) ? Number(state.goal)/100 : null;
   for (const sName of seriesRight) {
     if (!state.seriesFilter[sName]) continue;
-    const y = selectedDiscs.map(subj =>
-      aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName]
-    );
-
-    let marker = { opacity:0.95, color: COLORS[sName], line:{width:0} }; // sem borda
-    if (sName === '%≥6' && g != null) {
-      marker.color = y.map(v => (v >= g ? COLORS['%≥6'] : '#64748b'));
-    }
-
+    const y = x.map(subj => aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName]);
+    let marker = {opacity:0.95,color:COLORS[sName],line:{width:0}};
+    if (sName === '%≥6' && g != null) marker.color = y.map(v => (v >= g ? COLORS['%≥6'] : '#64748b'));
     traces.push({
       type:'bar', x, y, name:sName, yaxis:'y2',
-      offsetgroup: nextGroup(),
-      alignmentgroup: 'all',
-      width: BAR_WIDTH,
-      marker,
-      text: y.map(fmtPct),
-      textposition: 'outside',
-      cliponaxis: false,
-      hovertemplate: `%{x}<br>${sName}: %{y:.1%}<extra></extra>`,
-      showlegend: true
+      offsetgroup: nextGroup(), alignmentgroup:'all', width:BAR_WIDTH,
+      marker, text:y.map(fmtPct), textposition:'outside', cliponaxis:false,
+      hovertemplate:`%{x}<br>${sName}: %{y:.1%}<extra></extra>`,
+      showlegend:true
     });
   }
 
-  if (!traces.length) return alert('Todos os filtros de séries estão desligados. Marque ao menos um.');
+  if (!traces.length) return {traces:[],layout:{}};
 
+  const classesSummary = summarizeList(Array.from(classSet||[]));
   const shapes = [];
-  if (g != null) {
-    shapes.push({
-      type:'line', xref:'paper', x0:0, x1:1, yref:'y2', y0:g, y1:g,
-      line:{ color:'#ef4444', width:2, dash:'dot' }
-    });
+  if ((state.goal != null) && !Number.isNaN(state.goal)) {
+    shapes.push({type:'line',xref:'paper',x0:0,x1:1,yref:'y2',y0:Number(state.goal)/100,y1:Number(state.goal)/100,
+      line:{color:'#ef4444',width:2,dash:'dot'}});
   }
-
-  // anotação com as turmas selecionadas (ou "Todas")
-  const classesSummary = classKey
-    ? summarizeList(state.selectedClasses)
-    : '—';
 
   const layout = {
-    title: { text: `Bimestres: ${selectedBims.join(', ')}`, x:0.5, xanchor:'center', pad:{t:4} },
+    title: { text: headerText, x:0.5, xanchor:'center', pad:{t:6} },
     barmode: state.barmode,
-    // espaçamento extra entre grupos e, principalmente, entre barras do mesmo grupo
-    bargap: 0.30,
-    bargroupgap: 0.35,
-
+    bargap: 0.30, bargroupgap: 0.35,
     font:{ color:'#e2e8f0' },
     paper_bgcolor:'transparent', plot_bgcolor:'transparent',
     hovermode:'x unified',
     xaxis:{ gridcolor:'#1f2a44', title:'Disciplinas', automargin:true },
     yaxis:{ gridcolor:'#1f2a44', title:'Quantidade', automargin:true },
     yaxis2:{ overlaying:'y', side:'right', tickformat:'.0%', range:[0,1], title:'Percentual', showgrid:false },
-
-    // legenda no rodapé, centralizada e sempre visível
-    showlegend: true,
-    legend:{
-      orientation:'h',
-      x:0.5, xanchor:'center',
-      y:-0.24, yanchor:'top',
-      tracegroupgap:12,
-      font:{size:12}
-    },
-
-    // espaço para título + anotação e para legenda abaixo
+    showlegend:true,
+    legend:{ orientation:'h', x:0.5, xanchor:'center', y:-0.24, yanchor:'top', tracegroupgap:12, font:{size:12} },
     margin:{ l:60, r:60, t:80, b:110 },
-
-    // anotação: Séries/Turmas selecionadas
-    annotations:[{
-      xref:'paper', yref:'paper', x:0.5, y:1.08, showarrow:false,
+    annotations:[{ xref:'paper', yref:'paper', x:0.5, y:1.08, showarrow:false,
       text:`<span style="color:#94a3b8"><b>Série/Turma:</b> ${classesSummary}</span>`,
-      xanchor:'center', align:'center'
-    }],
-
+      xanchor:'center', align:'center'}],
     shapes
   };
 
-  Plotly.newPlot('chartHost', traces, layout, { responsive:true, displaylogo:false });
-  state.lastPlot = { type:'multi-disc', bims:selectedBims.slice(), discs:selectedDiscs.slice() };
+  return { traces, layout };
+}
+
+// ============== Plot principal: TOTAL + 1 gráfico por turma selecionada ==============
+function plotMultiPanels(){
+  const rowsAll = state.dataBySheet[state.sheet];
+  if(!rowsAll) return alert('Planilha não carregada.');
+  const { bimKey, classKey } = getKeys();
+  const selectedBims = state.selectedBims;
+  if(!selectedBims.length) return alert('Escolha ao menos um Bimestre.');
+  const subjects = state.selectedDiscs.length ? state.selectedDiscs : detectSubjects();
+  if(!subjects.length) return alert('Selecione ao menos uma disciplina.');
+
+  // limpa área e cria os contêineres
+  const area = $('chartArea'); area.innerHTML = '';
+
+  // 1) TOTAL (somando as turmas selecionadas)
+  const totalSet = new Set(state.selectedClasses.map(String)); // pode estar vazio => soma todas
+  const totalBox = document.createElement('div'); totalBox.className='chartBox'; totalBox.id='chartTotal';
+  area.appendChild(totalBox);
+  const {traces:trT, layout:lyT} =
+    buildTracesAndLayout({subjects, classSet: totalSet, selectedBims, headerText:`Bimestres: ${selectedBims.join(', ')} — TOTAL`});
+  if(!trT.length) return alert('Todos os filtros de séries estão desligados. Marque ao menos um.');
+  Plotly.newPlot(totalBox, trT, lyT, {responsive:true, displaylogo:false});
+
+  // 2) Um gráfico POR turma selecionada
+  const classes = state.selectedClasses.length ? state.selectedClasses.slice() :
+                  (classKey ? uniqueValues(rowsAll, classKey).sort() : []);
+  for(const turma of classes){
+    const classSet = new Set([String(turma)]);
+    const box = document.createElement('div'); box.className='chartBox';
+    box.id = 'chart_'+String(turma).replace(/\W+/g,'_');
+    area.appendChild(box);
+
+    const {traces, layout} =
+      buildTracesAndLayout({subjects, classSet, selectedBims, headerText:`Bimestres: ${selectedBims.join(', ')} — ${turma}`});
+    Plotly.newPlot(box, traces, layout, {responsive:true, displaylogo:false});
+  }
+
+  state.lastPlot = { type:'panels', bims:selectedBims.slice(), discs:subjects.slice(), classes:state.selectedClasses.slice() };
   saveState();
 }
-window.plotMultiByDiscipline = plotMultiByDiscipline;
+window.plotMultiByDiscipline = plotMultiPanels; // mantém compatível com chamadas antigas
 
-// ================= Export CSV =================
+// ================= Export CSV (agregado por bimestre/disciplinas, total) =================
 function exportCSV(){
   const rowsAll = state.dataBySheet[state.sheet];
   if(!rowsAll) return alert('Planilha não carregada.');
@@ -438,12 +403,10 @@ function exportCSV(){
       const agg = aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet);
       const row = [
         b, subj,
-        (agg['M<5']||0),
-        (agg['5≤M<6']||0),
-        (agg['M≥6']||0),
-        Number.isFinite(agg['%<5'])   ? (agg['%<5']*100).toFixed(1)+'%'   : '',
-        Number.isFinite(agg['5≤%<6']) ? (agg['5≤%<6']*100).toFixed(1)+'%' : '',
-        Number.isFinite(agg['%≥6'])   ? (agg['%≥6']*100).toFixed(1)+'%'   : ''
+        (agg['M<5']||0),(agg['5≤M<6']||0),(agg['M≥6']||0),
+        Number.isFinite(agg['%<5'])?(agg['%<5']*100).toFixed(1)+'%':'',
+        Number.isFinite(agg['5≤%<6'])?(agg['5≤%<6']*100).toFixed(1)+'%':'',
+        Number.isFinite(agg['%≥6'])?(agg['%≥6']*100).toFixed(1)+'%':''
       ];
       lines.push(row.join(','));
     }
@@ -451,7 +414,7 @@ function exportCSV(){
   const csv = lines.join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href=url; a.download='dados_bimestre_disciplina.csv'; a.click();
+  const a = document.createElement('a'); a.href=url; a.download='dados_total.csv'; a.click();
   URL.revokeObjectURL(url);
 }
 
@@ -481,7 +444,7 @@ async function init(){
     const selDisc = $('discSelect'); selDisc.innerHTML='';
     discs.forEach(v => { const o=document.createElement('option'); o.value=v; o.textContent=v; selDisc.appendChild(o); });
 
-    // Restaura preferências
+    // Prefs
     const prefs = loadState();
     state.barmode = (prefs.barmode==='stack')? 'stack':'group';
     $('modeSelect').value = state.barmode;
@@ -490,20 +453,15 @@ async function init(){
     document.querySelectorAll('#seriesFilter input[data-series]').forEach(chk=>{
       chk.checked = !!state.seriesFilter[chk.getAttribute('data-series')];
     });
-
-    // selecionados
-    const readKeep = (arr, pool)=> Array.isArray(arr) ? arr.filter(v => pool.includes(v)) : [];
-    state.selectedBims    = readKeep(prefs.bims, bims);
-    state.selectedClasses = readKeep(prefs.classes, classes);
-    state.selectedDiscs   = readKeep(prefs.discs, discs);
-
-    // aplica seleção aos selects
-    for(const opt of selBim.options)   opt.selected   = state.selectedBims.includes(opt.value);
-    for(const opt of selClass.options) opt.selected   = state.selectedClasses.includes(opt.value);
-    for(const opt of selDisc.options)  opt.selected   = state.selectedDiscs.includes(opt.value);
+    const keep = (arr,pool)=> Array.isArray(arr)? arr.filter(v=>pool.includes(v)):[];
+    state.selectedBims    = keep(prefs.bims, bims);
+    state.selectedClasses = keep(prefs.classes, classes);
+    state.selectedDiscs   = keep(prefs.discs, discs);
+    for(const o of selBim.options)   o.selected = state.selectedBims.includes(o.value);
+    for(const o of selClass.options) o.selected = state.selectedClasses.includes(o.value);
+    for(const o of selDisc.options)  o.selected = state.selectedDiscs.includes(o.value);
 
     setStatus(`Aba: ${state.sheet} | Bimestres: ${bims.join(', ')}`);
-    console.log('[init] columns:', state.columns);
   }catch(e){
     setStatus('Falha ao carregar planilha: '+e.message);
     console.error(e);
@@ -527,19 +485,26 @@ document.addEventListener('DOMContentLoaded', ()=>{
   $('btnDiscAll').addEventListener('click', ()=> selectAll($('discSelect')));
   $('btnDiscClear').addEventListener('click', ()=> clearAll($('discSelect')));
 
-  $('modeSelect').addEventListener('change', ()=>{ state.barmode=$('modeSelect').value; saveState(); if(state.lastPlot) plotMultiByDiscipline(); });
-  $('goalInput').addEventListener('input', ()=>{ const v=Number($('goalInput').value); state.goal = Number.isFinite(v)? v : null; saveState(); if(state.lastPlot) plotMultiByDiscipline(); });
+  $('modeSelect').addEventListener('change', ()=>{ state.barmode=$('modeSelect').value; saveState(); if(state.lastPlot) plotMultiPanels(); });
+  $('goalInput').addEventListener('input', ()=>{ const v=Number($('goalInput').value); state.goal = Number.isFinite(v)? v : null; saveState(); if(state.lastPlot) plotMultiPanels(); });
 
   document.querySelectorAll('#seriesFilter input[data-series]').forEach(chk=>{
     chk.addEventListener('change', ()=>{
       state.seriesFilter[chk.getAttribute('data-series')] = chk.checked;
       saveState();
-      if (state.lastPlot && state.lastPlot.type === 'multi-disc') plotMultiByDiscipline();
+      if (state.lastPlot) plotMultiPanels();
     });
   });
 
-  $('btnPlot').addEventListener('click', plotMultiByDiscipline);
-  $('btnDownload').addEventListener('click', ()=> Plotly.downloadImage('chartHost',{format:'png',filename:'dashboard'}));
+  $('btnPlot').addEventListener('click', plotMultiPanels);
+
+  // baixa o PNG do gráfico TOTAL
+  $('btnDownload').addEventListener('click', ()=>{
+    const el = document.getElementById('chartTotal') || document.querySelector('.chartBox');
+    if(!el){ alert('Plote um gráfico primeiro.'); return; }
+    Plotly.downloadImage(el, {format:'png', filename:'dashboard_total'});
+  });
+
   $('btnExport').addEventListener('click', exportCSV);
 
   init();
