@@ -125,12 +125,8 @@
 // ================= Config & Paleta =================
 const LABEL_MIN_PCT = 0.08; // rótulo só em %≥6 >= 8%
 const COLORS = {
-  'M<5'   : '#ef4444',   // vermelho
-  '5≤M<6' : '#f59e0b',   // âmbar
-  'M≥6'   : '#22c55e',   // verde
-  '%<5'   : '#fca5a5',   // vermelho claro
-  '5≤%<6' : '#fbbf24',   // âmbar claro
-  '%≥6'   : '#16a34a'    // verde forte (destacado por meta)
+  'M<5'   : '#ef4444', '5≤M<6' : '#f59e0b', 'M≥6'   : '#22c55e',
+  '%<5'   : '#fca5a5', '5≤%<6' : '#fbbf24', '%≥6'   : '#16a34a'
 };
 
 // ================= Estado =================
@@ -306,8 +302,7 @@ function buildTracesAndLayout({subjects, classSet, selectedBims, headerText}){
   for (const sName of seriesRight) {
     if (!state.seriesFilter[sName]) continue;
     const y = x.map(subj => aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName]);
-    let marker = {opacity:0.95,color:COLORS[sName],line:{width:0}};
-    if (sName === '%≥6' && g != null) marker.color = y.map(v => (v >= g ? COLORS['%≥6'] : '#64748b'));
+    let marker = {opacity:0.95,color:COLORS[sName],line:{width:0}}; // cor fixa para %≥6; a meta é indicada só pela linha pontilhada
     traces.push({
       type:'bar', x, y, name:sName, yaxis:'y2',
       offsetgroup: nextGroup(), alignmentgroup:'all', width:BAR_WIDTH,
