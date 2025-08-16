@@ -24,12 +24,25 @@
     <div id="chartHost" style="width:100%;height:500px;"></div>
   </main>
   <script>
-    const state = { dataBySheet:{}, columns:[] };
+    const state = { wb:null, dataBySheet:{}, columns:[], firstSheet:null };
 
     function sheetToJSON(sheetName){
-      const wb = state.wb;
-      const ws = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(ws,{defval:null});
+      const ws = state.wb.Sheets[sheetName];
+      // Lê como matriz (AOA) e reconstrói cabeçalho de 1 linha de forma robusta
+      const aoa = XLSX.utils.sheet_to_json(ws, { header:1, defval:null, raw:true });
+      if(!aoa || !aoa.length){ state.dataBySheet[sheetName]=[]; state.columns=[]; return []; }
+      // acha a primeira linha não vazia como cabeçalho
+      let h = 0; while(h<aoa.length && !aoa[h].some(v=>v!==null && v!=='')) h++;
+      const header = (aoa[h]||[]).map((v,i)=> String(v??`col_${i}`).trim());
+      const body = aoa.slice(h+1)
+        .filter(r => r.some(v => v!==null && v!==''))
+        .map(r => Object.fromEntries(header.map((k,i)=>[k, r[i] ?? null])));
+      state.dataBySheet[sheetName] = body;
+      state.columns = header;
+      console.log('[sheetToJSON] header=', header);
+      console.log('[sheetToJSON] first row sample=', body[0]);
+      return body;
+    });
       state.dataBySheet[sheetName] = rows;
       state.columns = Object.keys(rows[0]||{});
       return rows;
@@ -49,8 +62,16 @@
     }
 
     function pickX(rows){
-      const pref=['Turma','Bimestre'];
-      for(const k of pref){ if(rows.length && (k in rows[0])) return k; }
+      if(!rows.length) return null;
+      const keys = Object.keys(rows[0]||{});
+      // X travado em Bimestre quando existir
+      if(keys.includes('Bimestre')) return 'Bimestre';
+      return keys[0] || null; // fallback
+    });
+      const pref=['Turma','Bimestre','Série','Classe'];
+      for(const k of pref){ if(keys.includes(k)) return k; }
+      return keys[0] || null; // pega a primeira coluna como fallback
+    }
       return rows.length?Object.keys(rows[0])[0]:null;
     }
 
@@ -59,14 +80,23 @@
       return rows.filter(r=>{ const sx=String(r[xKey]||''); return !re.test(sx); });
     }
 
+    function isPercentColumn(col){
+      const name = String(col).toLowerCase();
+      return name.includes('%') || name.includes('matem') || name.includes('portugu');
+    }
     function plotCustom(sheetName,yCol){
       const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
       const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
       const rows = filterValidRows(rowsAll,xKey);
       if(!state.columns.includes(yCol)) return alert('Coluna não encontrada: '+yCol);
-      const perc=/\%/.test(yCol);
+      const perc = true; // gráfico padronizado em percentual
       const pairs=[];
       for(const r of rows){ const v=toNumber(r[yCol],perc); if(!isNaN(v)) pairs.push({x:r[xKey],y:v}); }
+      const x=pairs.map(p=>p.x), y=pairs.map(p=>p.y);
+      const trace={type:'bar',x,y,name:yCol};
+      const layout={title:yCol,font:{color:'#e2e8f0'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',xaxis:{gridcolor:'#1f2a44', title:xKey},yaxis:{gridcolor:'#1f2a44', tickformat:'.0%', range:[0,1], title:'% ≥6'}};
+      Plotly.newPlot('chartHost',[trace],layout,{responsive:true,displaylogo:false});
+    }); }
       const x=pairs.map(p=>p.x), y=pairs.map(p=>p.y);
       const trace={type:'bar',x,y,name:yCol};
       const layout={title:yCol,font:{color:'#e2e8f0'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',xaxis:{gridcolor:'#1f2a44'},yaxis:{gridcolor:'#1f2a44'}};
@@ -81,6 +111,16 @@
         alert('Colunas não encontradas: '+yColA+' e/ou '+yColB);
         return;
       }
+      const perc=true; // comparação em percentual
+      const x=[],yA=[],yB=[];
+      for(const r of rows){
+        const va=toNumber(r[yColA],perc);
+        const vb=toNumber(r[yColB],perc);
+        if(!isNaN(va)&&!isNaN(vb)){x.push(r[xKey]);yA.push(va);yB.push(vb);} }
+      const traces=[{type:'bar',x,y:yA,name:yColA},{type:'bar',x,y:yB,name:yColB}];
+      const layout={title:`${yColA} × ${yColB}`,barmode:'group',font:{color:'#e2e8f0'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',xaxis:{gridcolor:'#1f2a44', title:xKey},yaxis:{gridcolor:'#1f2a44', tickformat:'.0%', range:[0,1], title:'% ≥6'}};
+      Plotly.newPlot('chartHost',traces,layout,{responsive:true,displaylogo:false});
+    }
       const percA=/\%/.test(yColA), percB=/\%/.test(yColB);
       const x=[],yA=[],yB=[];
       for(const r of rows){
@@ -97,9 +137,10 @@
       const f=await fetch('data/Bimestral.xlsx');
       const ab=await f.arrayBuffer();
       const wb=XLSX.read(ab,{type:'array'});
-      state.wb=wb;
-      sheetToJSON('Planilha1');
-      console.log('Planilha carregada. Colunas:',state.columns);
+      state.wb=wb; state.firstSheet = wb.SheetNames[0];
+      const rows = sheetToJSON(state.firstSheet);
+      console.log('Planilha carregada. Aba usada:', state.firstSheet, 'Colunas:', state.columns);
+      if(!rows.length){ alert('Planilha sem dados legíveis. Verifique se a primeira linha contém os cabeçalhos.'); }
     }
     init();
   </script>
