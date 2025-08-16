@@ -212,9 +212,23 @@ function resolveCol(subject, kind){
   }
   return null;
 }
+// sumariza listas longas para anotar no gráfico
+function summarizeList(arr, maxLen=80){
+  if(!arr || !arr.length) return 'Todas';
+  const s = arr.join(', ');
+  if(s.length <= maxLen) return s;
+  const out = [];
+  let used = 0;
+  for(const v of arr){
+    const add = (out.length?2:0) + v.length;
+    if(used + add > maxLen) break;
+    out.push(v); used += add;
+  }
+  const rest = arr.length - out.length;
+  return out.join(', ') + ` … (+${rest})`;
+}
 
 // ================= Agregação =================
-// Agrupa por disciplina filtrando por conjunto de bimestres e de turmas
 function aggregateBySubject(rows, subject, bimKey, classKey, selectedBimsSet, classSet){
   const filtered = rows.filter(r=>{
     const okBim   = !bimKey || !selectedBimsSet || !selectedBimsSet.size ? true : selectedBimsSet.has(String(r[bimKey]));
@@ -257,7 +271,6 @@ function aggregateBySubject(rows, subject, bimKey, classKey, selectedBimsSet, cl
   if(tot>0){
     perc1 = sumB1/tot; perc2 = sumB2/tot; perc3 = sumB3/tot;
   }else{
-    // fallback: média simples dos percentuais
     perc1 = cntP1? (avgP1/cntP1) : NaN;
     perc2 = cntP2? (avgP2/cntP2) : NaN;
     perc3 = cntP3? (avgP3/cntP3) : NaN;
@@ -266,7 +279,7 @@ function aggregateBySubject(rows, subject, bimKey, classKey, selectedBimsSet, cl
   return { 'M<5':sumB1, '5≤M<6':sumB2, 'M≥6':sumB3, '%<5':perc1, '5≤%<6':perc2, '%≥6':perc3 };
 }
 
-// ================= Plot (com offset por série, sem sobreposição) =================
+// ================= Plot (com offset por série, legenda no rodapé e anotação das turmas) =================
 function plotMultiByDiscipline(){
   const rowsAll = state.dataBySheet[state.sheet];
   if(!rowsAll) return alert('Planilha não carregada.');
@@ -351,8 +364,13 @@ function plotMultiByDiscipline(){
     });
   }
 
+  // anotação com as turmas selecionadas (ou "Todas")
+  const classesSummary = classKey
+    ? summarizeList(state.selectedClasses)
+    : '—';
+
   const layout = {
-    title: `Bimestres: ${selectedBims.join(', ')}`,
+    title: { text: `Bimestres: ${selectedBims.join(', ')}`, x:0.5, xanchor:'center', pad:{t:6} },
     barmode: state.barmode,
     bargap: 0.25,
     font:{ color:'#e2e8f0' },
@@ -361,8 +379,26 @@ function plotMultiByDiscipline(){
     xaxis:{ gridcolor:'#1f2a44', title:'Disciplinas', automargin:true },
     yaxis:{ gridcolor:'#1f2a44', title:'Quantidade', automargin:true },
     yaxis2:{ overlaying:'y', side:'right', tickformat:'.0%', range:[0,1], title:'Percentual', showgrid:false },
-    legend:{ orientation:'h', x:0, y:1.12, tracegroupgap:12 },
-    margin:{ l:60, r:60, t:60, b:60 },
+
+    // legenda no rodapé (evita colisão com título)
+    legend:{
+      orientation:'h',
+      x:0, xanchor:'left',
+      y:-0.24, yanchor:'top',
+      tracegroupgap:12,
+      font:{size:11}
+    },
+
+    // espaço para título + anotação e para legenda abaixo
+    margin:{ l:60, r:60, t:80, b:110 },
+
+    // anotação: Séries/Turmas selecionadas
+    annotations:[{
+      xref:'paper', yref:'paper', x:0.5, y:1.08, showarrow:false,
+      text:`<span style="color:#94a3b8"><b>Série/Turma:</b> ${classesSummary}</span>`,
+      xanchor:'center', align:'center'
+    }],
+
     shapes
   };
 
@@ -465,17 +501,14 @@ async function init(){
 
 // ================= Ligações UI =================
 document.addEventListener('DOMContentLoaded', ()=>{
-  // helpers
   const readMulti = (sel)=> Array.from(sel.selectedOptions).map(o=>o.value);
   const selectAll = (sel)=> { for(const o of sel.options) o.selected = true; sel.dispatchEvent(new Event('change')); };
   const clearAll  = (sel)=> { for(const o of sel.options) o.selected = false; sel.dispatchEvent(new Event('change')); };
 
-  // selects múltiplos
   $('bimSelect').addEventListener('change', ()=>{ state.selectedBims = readMulti($('bimSelect')); saveState(); });
   $('classSelect').addEventListener('change', ()=>{ state.selectedClasses = readMulti($('classSelect')); saveState(); });
   $('discSelect').addEventListener('change', ()=>{ state.selectedDiscs = readMulti($('discSelect')); saveState(); });
 
-  // selecionar/limpar todos
   $('btnBimAll').addEventListener('click', ()=> selectAll($('bimSelect')));
   $('btnBimClear').addEventListener('click', ()=> clearAll($('bimSelect')));
   $('btnClassAll').addEventListener('click', ()=> selectAll($('classSelect')));
@@ -483,11 +516,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
   $('btnDiscAll').addEventListener('click', ()=> selectAll($('discSelect')));
   $('btnDiscClear').addEventListener('click', ()=> clearAll($('discSelect')));
 
-  // modo/meta
   $('modeSelect').addEventListener('change', ()=>{ state.barmode=$('modeSelect').value; saveState(); if(state.lastPlot) plotMultiByDiscipline(); });
   $('goalInput').addEventListener('input', ()=>{ const v=Number($('goalInput').value); state.goal = Number.isFinite(v)? v : null; saveState(); if(state.lastPlot) plotMultiByDiscipline(); });
 
-  // séries (checkboxes)
   document.querySelectorAll('#seriesFilter input[data-series]').forEach(chk=>{
     chk.addEventListener('change', ()=>{
       state.seriesFilter[chk.getAttribute('data-series')] = chk.checked;
@@ -496,7 +527,6 @@ document.addEventListener('DOMContentLoaded', ()=>{
     });
   });
 
-  // ações
   $('btnPlot').addEventListener('click', plotMultiByDiscipline);
   $('btnDownload').addEventListener('click', ()=> Plotly.downloadImage('chartHost',{format:'png',filename:'dashboard'}));
   $('btnExport').addEventListener('click', exportCSV);
