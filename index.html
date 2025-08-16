@@ -127,7 +127,7 @@ const COLORS = {
   'M≥6'   : '#22c55e',   // verde
   '%<5'   : '#fca5a5',   // vermelho claro
   '5≤%<6' : '#fbbf24',   // âmbar claro
-  '%≥6'   : '#16a34a'    // verde forte (será realçado pela meta)
+  '%≥6'   : '#16a34a'    // verde forte (destacado por meta)
 };
 
 // ================= Estado =================
@@ -266,7 +266,7 @@ function aggregateBySubject(rows, subject, bimKey, classKey, selectedBimsSet, cl
   return { 'M<5':sumB1, '5≤M<6':sumB2, 'M≥6':sumB3, '%<5':perc1, '5≤%<6':perc2, '%≥6':perc3 };
 }
 
-// ================= Plot =================
+// ================= Plot (com offset por série, sem sobreposição) =================
 function plotMultiByDiscipline(){
   const rowsAll = state.dataBySheet[state.sheet];
   if(!rowsAll) return alert('Planilha não carregada.');
@@ -280,64 +280,93 @@ function plotMultiByDiscipline(){
   const classSet = new Set(state.selectedClasses.map(String));
   const bimSet   = new Set(selectedBims.map(String));
 
-  const seriesLeft  = ['M<5','5≤M<6','M≥6'];   // y
-  const seriesRight = ['%<5','5≤%<6','%≥6'];   // y2
+  const seriesLeft  = ['M<5','5≤M<6','M≥6'];   // eixo Y (quantidades)
+  const seriesRight = ['%<5','5≤%<6','%≥6'];   // eixo Y2 (percentuais)
   const x = selectedDiscs.slice();
-  const traces=[];
+  const traces = [];
 
-  // Quantidades (esquerda)
-  for(const sName of seriesLeft){
-    if(!state.seriesFilter[sName]) continue;
-    const y = selectedDiscs.map(subj => aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName] || 0);
+  // largura/offset por série para evitar sobreposição
+  const nSeries =
+    seriesLeft.filter(s => state.seriesFilter[s]).length +
+    seriesRight.filter(s => state.seriesFilter[s]).length || 1;
+  const BAR_WIDTH = Math.min(0.8 / nSeries, 0.22);
+  let groupIndex = 0;
+  const nextGroup = () => String(groupIndex++);
+
+  const fmtCount = v => (Number.isFinite(v) ? String(v) : '');
+  const fmtPct   = v => (Number.isFinite(v) ? (v * 100).toFixed(1) + '%' : '');
+
+  // Quantidades (Y)
+  for (const sName of seriesLeft) {
+    if (!state.seriesFilter[sName]) continue;
+    const y = selectedDiscs.map(subj =>
+      aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName] || 0
+    );
     traces.push({
       type:'bar', x, y, name:sName, yaxis:'y',
-      marker:{opacity:0.85, color: COLORS[sName]},
-      hovertemplate:`%{x}<br>${sName}: %{y:d}<extra></extra>`
+      offsetgroup: nextGroup(),
+      alignmentgroup: 'all',
+      width: BAR_WIDTH,
+      marker:{ opacity:0.85, color: COLORS[sName] },
+      text: y.map(fmtCount),
+      textposition: 'outside',
+      cliponaxis: false,
+      hovertemplate: `%{x}<br>${sName}: %{y:d}<extra></extra>`
     });
   }
 
-  // Percentuais (direita) — com destaque pela meta em %≥6
-  const g = (state.goal!=null && !Number.isNaN(state.goal)) ? Number(state.goal)/100 : null;
-  for(const sName of seriesRight){
-    if(!state.seriesFilter[sName]) continue;
-    const y = selectedDiscs.map(subj => aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName]);
-    let color = COLORS[sName];
-    let marker = {opacity:0.95, color};
-    if(sName === '%≥6' && g!=null){
-      // cores por barra: verde vivo se ≥meta, cinza se abaixo
-      marker.color = y.map(v => (v>=g) ? COLORS['%≥6'] : '#64748b');
+  // Percentuais (Y2)
+  const g = (state.goal != null && !Number.isNaN(state.goal)) ? Number(state.goal)/100 : null;
+  for (const sName of seriesRight) {
+    if (!state.seriesFilter[sName]) continue;
+    const y = selectedDiscs.map(subj =>
+      aggregateBySubject(rowsAll, subj, bimKey, classKey, bimSet, classSet)[sName]
+    );
+
+    let marker = { opacity:0.95, color: COLORS[sName] };
+    if (sName === '%≥6' && g != null) {
+      marker.color = y.map(v => (v >= g ? COLORS['%≥6'] : '#64748b'));
     }
+
     traces.push({
       type:'bar', x, y, name:sName, yaxis:'y2',
-      text: y.map(v => (sName==='%≥6' && v>=LABEL_MIN_PCT) ? (v*100).toFixed(1)+'%' : ''),
-      textposition:'outside', marker,
-      hovertemplate:`%{x}<br>${sName}: %{y:.1%}<extra></extra>`
+      offsetgroup: nextGroup(),
+      alignmentgroup: 'all',
+      width: BAR_WIDTH,
+      marker,
+      text: y.map(fmtPct),
+      textposition: 'outside',
+      cliponaxis: false,
+      hovertemplate: `%{x}<br>${sName}: %{y:.1%}<extra></extra>`
     });
   }
 
-  if(!traces.length) return alert('Todos os filtros de séries estão desligados. Marque ao menos um.');
+  if (!traces.length) return alert('Todos os filtros de séries estão desligados. Marque ao menos um.');
 
-  const shapes=[];
-  if(g!=null){
-    shapes.push({type:'line',xref:'paper',x0:0,x1:1,yref:'y2',y0:g,y1:g,line:{color:'#ef4444',width:2,dash:'dot'}});
+  const shapes = [];
+  if (g != null) {
+    shapes.push({
+      type:'line', xref:'paper', x0:0, x1:1, yref:'y2', y0:g, y1:g,
+      line:{ color:'#ef4444', width:2, dash:'dot' }
+    });
   }
 
   const layout = {
     title: `Bimestres: ${selectedBims.join(', ')}`,
     barmode: state.barmode,
-    bargap: 0.20, // barras mais finas
-    font:{color:'#e2e8f0'},
+    bargap: 0.25,
+    font:{ color:'#e2e8f0' },
     paper_bgcolor:'transparent', plot_bgcolor:'transparent',
     hovermode:'x unified',
     xaxis:{ gridcolor:'#1f2a44', title:'Disciplinas', automargin:true },
     yaxis:{ gridcolor:'#1f2a44', title:'Quantidade', automargin:true },
     yaxis2:{ overlaying:'y', side:'right', tickformat:'.0%', range:[0,1], title:'Percentual', showgrid:false },
-    legend:{orientation:'h', x:0, y:1.12, tracegroupgap:12},
-    margin:{l:60,r:60,t:60,b:60},
+    legend:{ orientation:'h', x:0, y:1.12, tracegroupgap:12 },
+    margin:{ l:60, r:60, t:60, b:60 },
     shapes
   };
 
-  Plotly.newPlot('chartHost', traces, layout, {responsive:true, displaylogo:false});
+  Plotly.newPlot('chartHost', traces, layout, { responsive:true, displaylogo:false });
   state.lastPlot = { type:'multi-disc', bims:selectedBims.slice(), discs:selectedDiscs.slice() };
   saveState();
 }
@@ -365,9 +394,9 @@ function exportCSV(){
         (agg['M<5']||0),
         (agg['5≤M<6']||0),
         (agg['M≥6']||0),
-        isFinite(agg['%<5'])   ? (agg['%<5']*100).toFixed(1)+'%'   : '',
-        isFinite(agg['5≤%<6']) ? (agg['5≤%<6']*100).toFixed(1)+'%' : '',
-        isFinite(agg['%≥6'])   ? (agg['%≥6']*100).toFixed(1)+'%'   : ''
+        Number.isFinite(agg['%<5'])   ? (agg['%<5']*100).toFixed(1)+'%'   : '',
+        Number.isFinite(agg['5≤%<6']) ? (agg['5≤%<6']*100).toFixed(1)+'%' : '',
+        Number.isFinite(agg['%≥6'])   ? (agg['%≥6']*100).toFixed(1)+'%'   : ''
       ];
       lines.push(row.join(','));
     }
@@ -414,11 +443,13 @@ async function init(){
     document.querySelectorAll('#seriesFilter input[data-series]').forEach(chk=>{
       chk.checked = !!state.seriesFilter[chk.getAttribute('data-series')];
     });
+
     // selecionados
     const readKeep = (arr, pool)=> Array.isArray(arr) ? arr.filter(v => pool.includes(v)) : [];
     state.selectedBims    = readKeep(prefs.bims, bims);
     state.selectedClasses = readKeep(prefs.classes, classes);
     state.selectedDiscs   = readKeep(prefs.discs, discs);
+
     // aplica seleção aos selects
     for(const opt of selBim.options)   opt.selected   = state.selectedBims.includes(opt.value);
     for(const opt of selClass.options) opt.selected   = state.selectedClasses.includes(opt.value);
