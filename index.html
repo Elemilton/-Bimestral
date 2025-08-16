@@ -32,7 +32,7 @@
 </head>
 <body>
   <header class="container">
-    <div style="font-weight:700">Disciplinas Detalhadas — Dashboard</div>
+    <div style="font-weight:700">Disciplinas Detalhadas - Dashboard</div>
     <div id="status" style="margin-left:auto;font-size:12px;opacity:.85"></div>
   </header>
 
@@ -63,6 +63,8 @@
         <label>Ações</label>
         <div class="toolbar">
           <span style="margin-left:16px;opacity:.85">Detalhado:</span>
+
+          <!-- Botões para TODAS as disciplinas -->
           <button class="secondary det" data-subject="Biologia">Biologia (Qnt + faixas + %)</button>
           <button class="secondary det" data-subject="Física">Física (Qnt + faixas + %)</button>
           <button class="secondary det" data-subject="Matemática">Matemática (Qnt + faixas + %)</button>
@@ -89,21 +91,261 @@
   </main>
 
 <script>
-// (restante do código JS segue igual)
-// Liga os botões de disciplinas detalhadas sem alterar a lógica existente.
-document.addEventListener('DOMContentLoaded', function(){
+// ===== Estado =====
+const state = { wb:null, sheet:null, dataBySheet:{}, columns:[], barmode:'group', goal:null, lastPlot:null };
+const $ = (id)=>document.getElementById(id);
+const setStatus = (msg) => $('status').textContent = msg;
+
+// ===== Persistência =====
+const saveState = ()=>{
+  console.log("Salvando estado:", state);
+  const payload = { sheet: state.sheet, subject: $('subjectSelect').value, barmode: state.barmode, goal: state.goal };
+  localStorage.setItem('dashboard@prefs', JSON.stringify(payload));
+};
+const loadState = ()=>{
   try{
-    document.querySelectorAll('button.det[data-subject]')
-      .forEach(btn=> btn.addEventListener('click', ()=>{
-        const s = btn.getAttribute('data-subject');
-        if(typeof plotDetailed === 'function'){
-          console.log('Acionando plotDetailed para', s);
-          plotDetailed(s);
-        }else{
-          alert('Função plotDetailed não encontrada no escopo atual.');
-        }
-      }));
-  }catch(e){ console.error('Erro ao ligar botões detalhados:', e); }
+    const prefs = JSON.parse(localStorage.getItem('dashboard@prefs')||'{}');
+    console.log("Carregado prefs:", prefs);
+    return prefs;
+  }catch(e){
+    console.error("Erro carregando prefs", e);
+    return {};
+  }
+};
+
+// ===== Utils =====
+function toNumber(val, isPercent=false){
+  if(val==null) return NaN;
+  if(typeof val==='number') return isPercent? (val>1? val/100: val) : val;
+  let s = String(val).trim(); if(!s) return NaN;
+  const perc = /%/.test(s) || isPercent; s = s.replace(/%/g,'').replace(/\./g,'').replace(/,/g,'.');
+  let n = Number(s);
+  return Number.isNaN(n) ? NaN : (perc ? (n>1? n/100 : n) : n);
+}
+function filterValidRows(rows, xKey){
+  return rows.filter(r=>{ const x = String(r[xKey]??''); return x && !/(sub\s*total|total)/i.test(x); });
+}
+function sheetToJSON(sheetName){
+  console.log("Convertendo sheet para JSON:", sheetName);
+  const ws = state.wb.Sheets[sheetName];
+  const aoa = XLSX.utils.sheet_to_json(ws, { header:1, defval:null, raw:true });
+  if(!aoa || !aoa.length){ state.dataBySheet[sheetName]=[]; state.columns=[]; return []; }
+  let h=0; while(h<aoa.length && !aoa[h].some(v=>v!==null && v!=='')) h++;
+  const header = (aoa[h]||[]).map((v,i)=> String(v??`col_${i}`).trim());
+  console.log("Cabeçalho detectado:", header);
+  const body = aoa.slice(h+1)
+    .filter(r => r.some(v => v!==null && v!=='')) // remove linhas completamente vazias
+    .map(r => Object.fromEntries(header.map((k,i)=>[k, r[i] ?? null])));
+  console.log("Linhas carregadas:", body.length);
+  state.dataBySheet[sheetName] = body; state.columns = header; return body;
+}
+function pickX(rows){
+  if(!rows.length) return null; const keys = Object.keys(rows[0]||{});
+  const pref = ['Bimestres','Bimestre','Série/Turma','Turma','Série','Classe'];
+  for(const k of pref){ if(keys.includes(k)) return k; }
+  return keys[0] || null;
+}
+function detectSubjects(){
+  const subj = new Set();
+  for(const col of state.columns){
+    const [left, right] = String(col).split('|');
+    if(left && right) subj.add(left.trim());
+  }
+  console.log("Disciplinas detectadas:", subj);
+  return Array.from(subj);
+}
+function resolveCol(subject, kind){
+  console.log("Resolvendo coluna:", subject, "kind:", kind);
+  const norm = s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,'').toLowerCase();
+  const candidates = state.columns;
+  for(const c of candidates){
+    const parts = String(c).split('|'); const L = norm(parts[0]||''); const Rraw = parts.slice(1).join('|'); const R = norm(Rraw);
+    if(!L) continue; if(!L.includes(norm(subject))) continue;
+    if(kind==='pct_ge6'   && /(>=\s*6|\u2265\s*6)/.test(Rraw)) return c;
+    if(kind==='qty'       && (/^q(nt|uantidade)$/i.test(Rraw) || /^qnt$/i.test(parts[1]||''))) return c;
+    if(kind==='pct_lt5'   && /%\s*<\s*5|%<5/i.test(Rraw)) return c;
+    if(kind==='pct_5_6'   && /5\s*≤\s*%\s*<\s*6|5≤%<6/i.test(Rraw)) return c;
+    if(kind==='band_mlt5' && /m\s*<\s*5|m<5/i.test(Rraw)) return c;
+    if(kind==='band_5_6'  && /5\s*≤\s*m\s*<\s*6|5≤m<6/i.test(Rraw)) return c;
+    if(kind==='band_mge6' && /m\s*≥\s*6|m≥6/i.test(Rraw)) return c;
+  }
+  return null;
+}
+
+// ===== Preparação de dados (usado por export/plots simples) =====
+function buildPairs(sheetName, col, asPercent=true){
+  const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
+  const xKey = pickX(rowsAll); if(!xKey) throw new Error('Coluna de eixo X não encontrada');
+  const rows = filterValidRows(rowsAll, xKey);
+  const pairs=[]; for(const r of rows){ const y=toNumber(r[col], asPercent); if(!isNaN(y)) pairs.push({[xKey]:r[xKey], valor:y}); }
+  return { xKey, pairs };
+}
+
+// ===== Plot simples (não há botões, mas mantive para export e uso futuro) =====
+function plotSingle(subject){
+  const col = resolveCol(subject,'pct_ge6') || `${subject}|%≥6`;
+  if(!state.columns.includes(col)) return alert('Coluna não encontrada para '+subject+' (%≥6).');
+  const { xKey, pairs } = buildPairs(state.sheet, col, true);
+  const x = pairs.map(p=>p[xKey]); const y = pairs.map(p=>p.valor);
+  const shapes = [];
+  if(state.goal!=null && !Number.isNaN(state.goal)){
+    const g = Number(state.goal)/100; shapes.push({type:'line',xref:'paper',x0:0,x1:1,y0:g,y1:g,line:{color:'#ef4444',width:2,dash:'dot'}});
+  }
+  const trace={ type:'bar', x, y, name:`${subject} %≥6`, text:y.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside' };
+  const layout={ title:`${subject} | %≥6`, barmode: state.barmode, font:{color:'#e2e8f0'}, paper_bgcolor:'transparent', plot_bgcolor:'transparent',
+    xaxis:{gridcolor:'#1f2a44', title:xKey}, yaxis:{gridcolor:'#1f2a44', tickformat:'.0%', range:[0,1], title:'% ≥6'}, shapes };
+  Plotly.newPlot('chartHost',[trace],layout,{responsive:true,displaylogo:false});
+  state.lastPlot = { type:'single', subject, col, xKey, data:pairs };
+  saveState();
+}
+
+// ===== Plot comparação (mantido para export/uso futuro) =====
+function plotCompare(){
+  const s1='Matemática', s2='Português';
+  const c1 = resolveCol(s1,'pct_ge6') || `${s1}|%≥6`; if(!state.columns.includes(c1)) return alert('Coluna não encontrada: '+c1);
+  const c2 = resolveCol(s2,'pct_ge6') || `${s2}|%≥6`; if(!state.columns.includes(c2)) return alert('Coluna não encontrada: '+c2);
+  const { xKey, pairs: p1 } = buildPairs(state.sheet, c1, true);
+  const { pairs: p2 } = buildPairs(state.sheet, c2, true);
+  const x=p1.map(p=>p[xKey]); const yA=p1.map(p=>p.valor); const yB=p2.map(p=>p.valor);
+  const shapes=[]; if(state.goal!=null){ const g=Number(state.goal)/100; shapes.push({type:'line',xref:'paper',x0:0,x1:1,y0:g,y1:g,line:{color:'#ef4444',width:2,dash:'dot'}}); }
+  const traces=[{type:'bar',x,y:yA,name:`${s1} %≥6`,text:yA.map(v=>(v*100).toFixed(1)+'%'),textposition:'outside'},
+                {type:'bar',x,y:yB,name:`${s2} %≥6`,text:yB.map(v=>(v*100).toFixed(1)+'%'),textposition:'outside'}];
+  const layout={ title:`${s1} × ${s2} | %≥6`, barmode: state.barmode, font:{color:'#e2e8f0'}, paper_bgcolor:'transparent', plot_bgcolor:'transparent',
+    xaxis:{gridcolor:'#1f2a44', title:xKey}, yaxis:{gridcolor:'#1f2a44', tickformat:'.0%', range:[0,1], title:'% ≥6'}, shapes };
+  Plotly.newPlot('chartHost',traces,layout,{responsive:true,displaylogo:false});
+  state.lastPlot = { type:'compare', subjects:[s1,s2], cols:[c1,c2], xKey, data:[p1,p2] };
+  saveState();
+}
+
+// ===== Plot DETALHADO (Qnt + faixas + % com eixo secundário) =====
+function plotDetailed(subject){
+  console.log('[plotDetailed] subject =', subject);
+  const rowsAll = state.dataBySheet[state.sheet] || sheetToJSON(state.sheet);
+  const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
+  const rows = filterValidRows(rowsAll, xKey);
+
+  const qty  = resolveCol(subject,'qty');
+  const band1= resolveCol(subject,'band_mlt5');
+  const band2= resolveCol(subject,'band_5_6');
+  const band3= resolveCol(subject,'band_mge6');
+  const p1   = resolveCol(subject,'pct_lt5');
+  const p2   = resolveCol(subject,'pct_5_6');
+  const p3   = resolveCol(subject,'pct_ge6') || `${subject}|%≥6`;
+
+  const x = rows.map(r=>r[xKey]);
+  const traces=[];
+  if(qty){   traces.push({type:'bar', x, y:rows.map(r=>toNumber(r[qty],false)),  name:'Qnt',     yaxis:'y'}); }
+  if(band1){ traces.push({type:'bar', x, y:rows.map(r=>toNumber(r[band1],false)),name:'M<5',     yaxis:'y'}); }
+  if(band2){ traces.push({type:'bar', x, y:rows.map(r=>toNumber(r[band2],false)),name:'5≤M<6',   yaxis:'y'}); }
+  if(band3){ traces.push({type:'bar', x, y:rows.map(r=>toNumber(r[band3],false)),name:'M≥6',     yaxis:'y'}); }
+  if(p1){ const y=rows.map(r=>toNumber(r[p1],true)); traces.push({type:'bar', x, y, name:'%<5',   yaxis:'y2', text:y.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'}); }
+  if(p2){ const y=rows.map(r=>toNumber(r[p2],true)); traces.push({type:'bar', x, y, name:'5≤%<6',yaxis:'y2', text:y.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'}); }
+  if(p3){ const y=rows.map(r=>toNumber(r[p3],true)); traces.push({type:'bar', x, y, name:'%≥6',  yaxis:'y2', text:y.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'}); }
+
+  if(!traces.length) return alert('Não encontrei colunas para '+subject);
+
+  const layout = {
+    title: `${subject} — detalhado`,
+    barmode: state.barmode,
+    font:{color:'#e2e8f0'},
+    paper_bgcolor:'transparent', plot_bgcolor:'transparent',
+    xaxis:{ gridcolor:'#1f2a44', title:xKey },
+    yaxis:{ gridcolor:'#1f2a44', title:'Quantidade' },
+    yaxis2:{ gridcolor:'#1f2a44', overlaying:'y', side:'right', tickformat:'.0%', range:[0,1], title:'Percentual' },
+    legend:{orientation:'h', x:0, y:1.12},
+    margin:{l:60,r:60,t:60,b:60}
+  };
+
+  Plotly.newPlot('chartHost', traces, layout, {responsive:true, displaylogo:false});
+  state.lastPlot = { type:'detailed', subject, xKey };
+  saveState();
+}
+// torna a função visível globalmente (para os botões com data-subject)
+window.plotDetailed = plotDetailed;
+
+// ===== Export / Download =====
+function downloadPNG(){ Plotly.downloadImage('chartHost',{format:'png',filename:'dashboard'}); }
+function exportCSV(){
+  if(!state.lastPlot) return alert('Gere um gráfico antes de exportar.');
+  let rows=[]; let headers=[]; let xKey='';
+  if(state.lastPlot.type==='single'){
+    xKey = state.lastPlot.xKey; headers=[xKey,'valor'];
+    rows = state.lastPlot.data.map(p=>({[xKey]:p[xKey], valor:(p.valor*100).toFixed(1)+'%'}));
+  } else if(state.lastPlot.type==='compare'){
+    xKey = state.lastPlot.xKey; headers=[xKey, state.lastPlot.subjects[0], state.lastPlot.subjects[1]];
+    const a = state.lastPlot.data[0], b = state.lastPlot.data[1];
+    for(let i=0;i<a.length;i++){
+      rows.push({[xKey]:a[i][xKey], [state.lastPlot.subjects[0]]:(a[i].valor*100).toFixed(1)+'%', [state.lastPlot.subjects[1]]:(b[i].valor*100).toFixed(1)+'%'});
+    }
+  } else {
+    return alert('Exportação CSV ainda não implementada para o detalhado.');
+  }
+  const csv = [headers.join(','), ...rows.map(r=> headers.map(h=> String(r[h]).replace(/,/g,'')).join(','))].join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='dados.csv'; a.click(); URL.revokeObjectURL(url);
+}
+
+// ===== Inicialização + Ligações =====
+async function init(){
+  try{
+    const res = await fetch('data/Bimestral.xlsx');
+    if(!res.ok) throw new Error('Erro '+res.status+' ao carregar data/Bimestral.xlsx');
+    const ab = await res.arrayBuffer(); state.wb = XLSX.read(ab, { type:'array' });
+
+    // popula select de abas
+    const selSheet = $('sheetSelect'); selSheet.innerHTML='';
+    state.wb.SheetNames.forEach(name => { const o=document.createElement('option'); o.value=name; o.textContent=name; selSheet.appendChild(o); });
+
+    // restaura preferências
+    const prefs = loadState();
+    state.sheet = prefs.sheet && state.wb.SheetNames.includes(prefs.sheet) ? prefs.sheet : state.wb.SheetNames[0];
+    selSheet.value = state.sheet;
+    sheetToJSON(state.sheet);
+
+    // disciplinas detectadas pelo cabeçalho
+    const subjects = detectSubjects();
+    const selSub=$('subjectSelect'); selSub.innerHTML='';
+    subjects.forEach(s=>{ const o=document.createElement('option'); o.value=s; o.textContent=s; selSub.appendChild(o); });
+    selSub.value = subjects.includes(prefs.subject)? prefs.subject : (subjects[0]||'');
+
+    // barmode/meta
+    state.barmode = (prefs.barmode==='stack')? 'stack':'group';
+    $('modeSelect').value = state.barmode;
+    state.goal = (prefs.goal!=null)? prefs.goal : null;
+    if(state.goal!=null) $('goalInput').value=state.goal;
+
+    setStatus('Aba: '+state.sheet+' | Colunas: '+state.columns.slice(0,6).join(', ')+(state.columns.length>6?'…':''));
+  }catch(e){
+    setStatus('Falha ao carregar planilha: '+e.message); console.error(e);
+  }
+}
+
+// liga UI
+document.addEventListener('DOMContentLoaded', () => {
+  // selects
+  $('sheetSelect').addEventListener('change',()=>{
+    state.sheet=$('sheetSelect').value; sheetToJSON(state.sheet);
+    setStatus('Aba: '+state.sheet+' | Colunas: '+state.columns.slice(0,6).join(', ')+(state.columns.length>6?'…':''));
+    saveState();
+  });
+  $('subjectSelect').addEventListener('change',saveState);
+  $('modeSelect').addEventListener('change',()=>{ state.barmode=$('modeSelect').value; saveState(); });
+  $('goalInput').addEventListener('input',()=>{ const v=Number($('goalInput').value); state.goal = Number.isFinite(v)? v : null; saveState(); });
+
+  // botões detalhados, um handler para todos
+  document.querySelectorAll('button.det[data-subject]')
+    .forEach(btn=> btn.addEventListener('click', ()=> {
+      const s = btn.getAttribute('data-subject');
+      console.log('Acionando plotDetailed para', s);
+      window.plotDetailed(s);
+    }));
+
+  // download/export
+  $('btnDownload').addEventListener('click', downloadPNG);
+  $('btnExport').addEventListener('click', exportCSV);
+
+  // inicia
+  init();
 });
 </script>
 </body>
