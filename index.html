@@ -34,11 +34,9 @@
   </main>
 
   <script>
-  // ====== ESTADO GLOBAL ======
   const state = { wb:null, firstSheet:null, dataBySheet:{}, columns:[] };
   const setStatus = (msg) => document.getElementById('status').textContent = msg;
 
-  // ====== UTIL ======
   function toNumber(val, isPercent=false){
     if(val==null) return NaN;
     if(typeof val==='number') return isPercent? (val>1? val/100: val) : val;
@@ -57,12 +55,10 @@
     });
   }
 
-  // ====== XLSX → JSON (cabeçalho de 1 linha robusto) ======
   function sheetToJSON(sheetName){
     const ws = state.wb.Sheets[sheetName];
     const aoa = XLSX.utils.sheet_to_json(ws, { header:1, defval:null, raw:true });
     if(!aoa || !aoa.length){ state.dataBySheet[sheetName]=[]; state.columns=[]; return []; }
-    // primeira linha não vazia é o cabeçalho
     let h=0; while(h<aoa.length && !aoa[h].some(v=>v!==null && v!=='')) h++;
     const header = (aoa[h]||[]).map((v,i)=> String(v??`col_${i}`).trim());
     const body = aoa.slice(h+1)
@@ -73,16 +69,14 @@
     return body;
   }
 
-  // ====== Eixo X ======
   function pickX(rows){
     if(!rows.length) return null;
     const keys = Object.keys(rows[0]||{});
     const pref = ['Bimestres','Bimestre','Série/Turma','Turma','Série','Classe'];
     for(const k of pref){ if(keys.includes(k)) return k; }
-    return keys[0] || null; // fallback
+    return keys[0] || null;
   }
 
-  // ====== PLOT ======
   function plotCustom(sheetName, yCol){
     const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
     const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
@@ -92,9 +86,9 @@
     const pairs=[]; for(const r of rows){ const y=toNumber(r[yCol], true); if(!isNaN(y)) pairs.push({x:r[xKey], y}); }
     const x = pairs.map(p=>p.x), y = pairs.map(p=>p.y);
 
-    const trace = { type:'bar', x, y, name:yCol };
+    const trace = { type:'bar', x, y, name:yCol, marker:{color:'#3b82f6'}, text: y.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside' };
     const layout = {
-      title: yCol, barmode:'group', font:{color:'#e2e8f0'},
+      title: yCol, font:{color:'#e2e8f0'},
       paper_bgcolor:'transparent', plot_bgcolor:'transparent',
       xaxis:{ gridcolor:'#1f2a44', title:xKey },
       yaxis:{ gridcolor:'#1f2a44', tickformat:'.0%', range:[0,1], title:'% ≥6' }
@@ -115,11 +109,12 @@
       if(!isNaN(a) && !isNaN(b)){ x.push(r[xKey]); yA.push(a); yB.push(b); }
     }
     const traces = [
-      {type:'bar', x, y:yA, name:yColA},
-      {type:'bar', x, y:yB, name:yColB}
+      {type:'bar', x, y:yA, name:yColA, marker:{color:'#3b82f6'}, text: yA.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'},
+      {type:'bar', x, y:yB, name:yColB, marker:{color:'#f59e0b'}, text: yB.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'}
     ];
     const layout = {
-      title:`${yColA} × ${yColB}`, barmode:'group', font:{color:'#e2e8f0'},
+      barmode:'group',
+      title:`${yColA} × ${yColB}`, font:{color:'#e2e8f0'},
       paper_bgcolor:'transparent', plot_bgcolor:'transparent',
       xaxis:{ gridcolor:'#1f2a44', title:xKey },
       yaxis:{ gridcolor:'#1f2a44', tickformat:'.0%', range:[0,1], title:'% ≥6' }
@@ -127,7 +122,6 @@
     Plotly.newPlot('chartHost', traces, layout, {responsive:true, displaylogo:false});
   }
 
-  // ====== BOOT ======
   async function init(){
     try{
       const res = await fetch('data/Bimestral.xlsx');
@@ -140,7 +134,6 @@
     }catch(e){ setStatus('Falha ao carregar planilha: '+e.message); console.error(e); }
   }
 
-  // Botões (usam a primeira aba detectada)
   document.getElementById('btnMath').addEventListener('click', ()=> plotCustom(state.firstSheet, 'Matemática|%≥6'));
   document.getElementById('btnPort').addEventListener('click', ()=> plotCustom(state.firstSheet, 'Português|%≥6'));
   document.getElementById('btnCompare').addEventListener('click', ()=> plotCompare(state.firstSheet, 'Matemática|%≥6', 'Português|%≥6'));
