@@ -20,6 +20,12 @@
     .stack{display:grid;gap:8px}
     #chartHost{width:100%;height:560px;margin:0 auto;border:1px solid var(--stroke);border-radius:12px;background:linear-gradient(180deg,#0f172a,#0b1325)}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap}
+    .toolbar.compact label{
+      display:flex; align-items:center; gap:6px;
+      background:transparent; padding:4px 6px; border-radius:6px;
+      border:1px solid var(--stroke);
+    }
+    .toolbar.compact input{ width:auto; }
     .mini{font-size:12px;opacity:.8}
   </style>
   <noscript>
@@ -32,7 +38,7 @@
 </head>
 <body>
   <header class="container">
-    <div style="font-weight:700">Disciplinas Detalhadas - Dashboard</div>
+    <div style="font-weight:700">Disciplinas Detalhadas — Dashboard</div>
     <div id="status" style="margin-left:auto;font-size:12px;opacity:.85"></div>
   </header>
 
@@ -59,6 +65,7 @@
           <input id="goalInput" type="number" min="0" max="100" step="1" placeholder="Ex.: 70" />
         </div>
       </div>
+
       <div class="stack">
         <label>Ações</label>
         <div class="toolbar">
@@ -85,21 +92,49 @@
         </div>
         <div class="mini">Dica: clique na legenda para ocultar/exibir séries. Preferência salva automaticamente.</div>
       </div>
+
+      <!-- Filtro de séries -->
+      <div class="stack">
+        <label>Séries (mostrar)</label>
+        <div id="seriesFilter" class="toolbar compact">
+          <label><input type="checkbox" data-series="M<5"> M&lt;5</label>
+          <label><input type="checkbox" data-series="5≤M<6"> 5≤M&lt;6</label>
+          <label><input type="checkbox" data-series="M≥6"> M≥6</label>
+          <label><input type="checkbox" data-series="%<5"> %&lt;5</label>
+          <label><input type="checkbox" data-series="5≤%<6"> 5≤%&lt;6</label>
+          <label><input type="checkbox" data-series="%≥6"> %≥6</label>
+        </div>
+        <div class="mini">Marque apenas o que deseja ver no gráfico detalhado.</div>
+      </div>
     </aside>
 
     <section id="chartHost"></section>
   </main>
 
 <script>
+// ===== Config visual mínima =====
+const LABEL_MIN_PCT = 0.08;              // só rotula %≥6 quando ≥ 8%
+
 // ===== Estado =====
-const state = { wb:null, sheet:null, dataBySheet:{}, columns:[], barmode:'group', goal:null, lastPlot:null };
+const state = {
+  wb:null, sheet:null, dataBySheet:{}, columns:[],
+  barmode:'group', goal:null, lastPlot:null,
+  // filtro padrão: mostrar M≥6 e %≥6; demais ocultas
+  seriesFilter: { 'M<5': false, '5≤M<6': false, 'M≥6': true, '%<5': false, '5≤%<6': false, '%≥6': true }
+};
 const $ = (id)=>document.getElementById(id);
 const setStatus = (msg) => $('status').textContent = msg;
 
 // ===== Persistência =====
 const saveState = ()=>{
   console.log("Salvando estado:", state);
-  const payload = { sheet: state.sheet, subject: $('subjectSelect').value, barmode: state.barmode, goal: state.goal };
+  const payload = {
+    sheet: state.sheet,
+    subject: $('subjectSelect').value,
+    barmode: state.barmode,
+    goal: state.goal,
+    series: state.seriesFilter
+  };
   localStorage.setItem('dashboard@prefs', JSON.stringify(payload));
 };
 const loadState = ()=>{
@@ -181,7 +216,7 @@ function buildPairs(sheetName, col, asPercent=true){
   return { xKey, pairs };
 }
 
-// ===== Plot simples (não há botões, mas mantive para export e uso futuro) =====
+// ===== Plot simples (mantido para export/uso futuro) =====
 function plotSingle(subject){
   const col = resolveCol(subject,'pct_ge6') || `${subject}|%≥6`;
   if(!state.columns.includes(col)) return alert('Coluna não encontrada para '+subject+' (%≥6).');
@@ -217,7 +252,7 @@ function plotCompare(){
   saveState();
 }
 
-// ===== Plot DETALHADO (Qnt + faixas + % com eixo secundário) =====
+// ===== Plot DETALHADO (usa filtro de séries + visual limpo) =====
 function plotDetailed(subject){
   console.log('[plotDetailed] subject =', subject);
   const rowsAll = state.dataBySheet[state.sheet] || sheetToJSON(state.sheet);
@@ -234,25 +269,81 @@ function plotDetailed(subject){
 
   const x = rows.map(r=>r[xKey]);
   const traces=[];
-  if(qty){   traces.push({type:'bar', x, y:rows.map(r=>toNumber(r[qty],false)),  name:'Qnt',     yaxis:'y'}); }
-  if(band1){ traces.push({type:'bar', x, y:rows.map(r=>toNumber(r[band1],false)),name:'M<5',     yaxis:'y'}); }
-  if(band2){ traces.push({type:'bar', x, y:rows.map(r=>toNumber(r[band2],false)),name:'5≤M<6',   yaxis:'y'}); }
-  if(band3){ traces.push({type:'bar', x, y:rows.map(r=>toNumber(r[band3],false)),name:'M≥6',     yaxis:'y'}); }
-  if(p1){ const y=rows.map(r=>toNumber(r[p1],true)); traces.push({type:'bar', x, y, name:'%<5',   yaxis:'y2', text:y.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'}); }
-  if(p2){ const y=rows.map(r=>toNumber(r[p2],true)); traces.push({type:'bar', x, y, name:'5≤%<6',yaxis:'y2', text:y.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'}); }
-  if(p3){ const y=rows.map(r=>toNumber(r[p3],true)); traces.push({type:'bar', x, y, name:'%≥6',  yaxis:'y2', text:y.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'}); }
+  const f = state.seriesFilter || {}; // atalho
+  const labelIf = (name, yArr) => (yArr.map(v => (name === '%≥6' && v >= LABEL_MIN_PCT) ? (v*100).toFixed(1)+'%' : ''));
 
-  if(!traces.length) return alert('Não encontrei colunas para '+subject);
+  // Quantidade (sempre visível; se quiser filtrar também, adiciono checkbox 'Qnt')
+  if(qty){
+    traces.push({
+      type:'bar', x, y: rows.map(r=>toNumber(r[qty],false)),
+      name:'Qnt', yaxis:'y', marker:{opacity:0.75},
+      hovertemplate: '%{x}<br>Qtd: %{y:d}<extra>Qnt</extra>'
+    });
+  }
 
+  // Faixas (eixo y, conforme filtro)
+  if(band1 && f['M<5']){
+    traces.push({
+      type:'bar', x, y: rows.map(r=>toNumber(r[band1],false)),
+      name:'M<5', yaxis:'y', marker:{opacity:0.7},
+      hovertemplate: '%{x}<br>M<5: %{y:d}<extra>M<5</extra>'
+    });
+  }
+  if(band2 && f['5≤M<6']){
+    traces.push({
+      type:'bar', x, y: rows.map(r=>toNumber(r[band2],false)),
+      name:'5≤M<6', yaxis:'y', marker:{opacity:0.7},
+      hovertemplate: '%{x}<br>5≤M<6: %{y:d}<extra>5≤M<6</extra>'
+    });
+  }
+  if(band3 && f['M≥6']){
+    traces.push({
+      type:'bar', x, y: rows.map(r=>toNumber(r[band3],false)),
+      name:'M≥6', yaxis:'y', marker:{opacity:0.7},
+      hovertemplate: '%{x}<br>M≥6: %{y:d}<extra>M≥6</extra>'
+    });
+  }
+
+  // Percentuais (eixo y2, conforme filtro) — rótulos apenas %≥6 e acima do limiar
+  if(p1 && f['%<5']){
+    const y = rows.map(r=>toNumber(r[p1],true));
+    traces.push({
+      type:'bar', x, y, name:'%<5', yaxis:'y2',
+      text: labelIf('%<5', y), textposition:'outside',
+      hovertemplate: '%{x}<br>%<5: %{y:.1%}<extra>%<5</extra>'
+    });
+  }
+  if(p2 && f['5≤%<6']){
+    const y = rows.map(r=>toNumber(r[p2],true));
+    traces.push({
+      type:'bar', x, y, name:'5≤%<6', yaxis:'y2',
+      text: labelIf('5≤%<6', y), textposition:'outside',
+      hovertemplate: '%{x}<br>5≤%<6: %{y:.1%}<extra>5≤%<6</extra>'
+    });
+  }
+  if(p3 && f['%≥6']){
+    const y = rows.map(r=>toNumber(r[p3],true));
+    traces.push({
+      type:'bar', x, y, name:'%≥6', yaxis:'y2',
+      text: labelIf('%≥6', y), textposition:'outside',
+      hovertemplate: '%{x}<br>%≥6: %{y:.1%}<extra>%≥6</extra>'
+    });
+  }
+
+  if(!traces.length) return alert('Não encontrei colunas (ou filtros estão todos desligados) para '+subject);
+
+  // Layout: grade enxuta + barras mais finas
   const layout = {
     title: `${subject} — detalhado`,
     barmode: state.barmode,
+    bargap: 0.15, // barras mais finas
     font:{color:'#e2e8f0'},
     paper_bgcolor:'transparent', plot_bgcolor:'transparent',
-    xaxis:{ gridcolor:'#1f2a44', title:xKey },
-    yaxis:{ gridcolor:'#1f2a44', title:'Quantidade' },
-    yaxis2:{ gridcolor:'#1f2a44', overlaying:'y', side:'right', tickformat:'.0%', range:[0,1], title:'Percentual' },
-    legend:{orientation:'h', x:0, y:1.12},
+    hovermode:'x unified', // tooltip unificado
+    xaxis:{ gridcolor:'#1f2a44', title:xKey, automargin:true },
+    yaxis:{ gridcolor:'#1f2a44', title:'Quantidade', automargin:true },
+    yaxis2:{ overlaying:'y', side:'right', tickformat:'.0%', range:[0,1], title:'Percentual', showgrid:false },
+    legend:{orientation:'h', x:0, y:1.12, tracegroupgap:12},
     margin:{l:60,r:60,t:60,b:60}
   };
 
@@ -314,6 +405,15 @@ async function init(){
     state.goal = (prefs.goal!=null)? prefs.goal : null;
     if(state.goal!=null) $('goalInput').value=state.goal;
 
+    // filtro de séries (restaura)
+    if (prefs.series && typeof prefs.series === 'object') {
+      state.seriesFilter = { ...state.seriesFilter, ...prefs.series };
+    }
+    document.querySelectorAll('#seriesFilter input[data-series]').forEach(chk=>{
+      const key = chk.getAttribute('data-series');
+      chk.checked = !!state.seriesFilter[key];
+    });
+
     setStatus('Aba: '+state.sheet+' | Colunas: '+state.columns.slice(0,6).join(', ')+(state.columns.length>6?'…':''));
   }catch(e){
     setStatus('Falha ao carregar planilha: '+e.message); console.error(e);
@@ -339,6 +439,19 @@ document.addEventListener('DOMContentLoaded', () => {
       console.log('Acionando plotDetailed para', s);
       window.plotDetailed(s);
     }));
+
+  // filtro de séries (checkboxes)
+  document.querySelectorAll('#seriesFilter input[data-series]').forEach(chk=>{
+    chk.addEventListener('change', ()=>{
+      const key = chk.getAttribute('data-series');
+      state.seriesFilter[key] = chk.checked;
+      console.log('[seriesFilter]', JSON.stringify(state.seriesFilter));
+      saveState();
+      if (state.lastPlot && state.lastPlot.type === 'detailed') {
+        plotDetailed(state.lastPlot.subject);
+      }
+    });
+  });
 
   // download/export
   $('btnDownload').addEventListener('click', downloadPNG);
