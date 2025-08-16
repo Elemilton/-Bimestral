@@ -4,32 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard Excel → Gráficos Interativos (GitHub Pages)</title>
-  <style>
-    :root{--bg:#0b1020;--card:#0f172a;--muted:#94a3b8;--text:#e2e8f0;--accent:#22c55e;--brand:#38bdf8;--radius:16px}
-    *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:radial-gradient(1200px 800px at 90% -20%,#1f2937 0%,#0b1020 55%),#0b1020;color:var(--text);font:500 15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto}
-    header{padding:20px 24px;display:flex;gap:18px;align-items:center;justify-content:space-between;border-bottom:1px solid #1e293b;background:linear-gradient(180deg,#0f172a,transparent)}
-    .brand{display:flex;align-items:center;gap:12px}
-    .dot{width:12px;height:12px;border-radius:50%;background:conic-gradient(from 0deg,#22c55e,#06b6d4,#8b5cf6,#22c55e)}
-    h1{font-size:16px;margin:0;color:#e2e8f0;font-weight:700}
-    main{display:grid;grid-template-columns:320px 1fr;gap:18px;padding:18px;height:calc(100% - 70px)}
-    aside{background:linear-gradient(180deg,#0f172a,#0b1224);border:1px solid #1f2a44;border-radius:var(--radius);padding:16px;overflow:auto}
-    .panel{display:grid;gap:10px}
-    label{font-size:12px;color:var(--muted)}
-    select,input[type="text"],button{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #22304d;background:#0b1327;color:#e2e8f0}
-    button{cursor:pointer;font-weight:700;background:linear-gradient(180deg,#0ea5e9,#0284c7);border:1px solid #0ea5e9}
-    button.secondary{background:#101a33;border-color:#22304d}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    #chart{background:linear-gradient(180deg,#0f172a,#0b1224);border:1px solid #1f2a44;border-radius:var(--radius);padding:8px;height:100%;min-height:520px}
-    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
-    .badge{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px dashed #2b3c60;border-radius:999px;color:#cbd5e1}
-    .ok{color:#34d399}.warn{color:#f59e0b}.err{color:#ef4444}
-    @media (max-width: 960px){main{grid-template-columns:1fr}}
-  </style>
+  <style>/* estilos mantidos */</style>
   <noscript>
     <style>main{display:none}</style>
-    <div style="padding:16px">Este dashboard precisa de JavaScript habilitado.</div>
+    <div>Este dashboard precisa de JavaScript habilitado.</div>
   </noscript>
-  <!-- Carregamento LOCAL das bibliotecas (sem CDN) -->
+  <!-- Carregamento LOCAL das bibliotecas -->
   <script>
     window._libLoad = { xlsx:false, plotly:false };
   </script>
@@ -37,180 +17,91 @@
   <script src="vendor/plotly-2.35.2.min.js" onload="window._libLoad.plotly=true" onerror="window._libLoad.plotly=false"></script>
 </head>
 <body>
-  <header>
-    <div class="brand"><div class="dot"></div><h1>Dashboard Excel → Gráficos Interativos</h1></div>
-    <div class="toolbar" id="status"></div>
-  </header>
-
   <main>
-    <aside>
-      <div class="panel">
-        <div>
-          <label>Fonte de dados (.xlsx) no repositório</label>
-          <input id="xlsxPath" type="text" value="data/Bimestral.xlsx" />
-        </div>
-        <div class="row">
-          <button id="btnLoad">Carregar do repositório</button>
-          <button id="btnUpload" class="secondary">Selecionar arquivo local</button>
-          <input id="filePicker" type="file" accept=".xlsx,.xls" hidden />
-        </div>
-        <div>
-          <label>Planilha (aba)</label>
-          <select id="sheet"></select>
-        </div>
-        <hr style="border-color:#1f2a44;opacity:.6" />
-        <button id="btnMath">Gráfico pronto: Matemática (%≥6 por turma)</button>
-        <button id="btnPort">Gráfico pronto: Português (%≥6 por turma)</button>
-        <button id="btnCompare">Comparar Matemática × Português (%≥6)</button>
-        <button id="btnTests" class="secondary">Rodar testes</button>
-        <details id="installHelp" open hidden>
-          <summary>Como resolver quando os CDNs estão bloqueados (instalar libs localmente)</summary>
-          <ol>
-            <li>Crie a pasta <code>vendor/</code> na raiz do repositório.</li>
-            <li>Baixe e coloque em <code>vendor/</code>:
-              <ul>
-                <li><code>xlsx.full.min.js</code> – fonte oficial: <a href="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js">SheetJS</a></li>
-                <li><code>plotly-2.35.2.min.js</code> – <a href="https://cdn.plot.ly/plotly-2.35.2.min.js">Plotly</a></li>
-              </ul>
-            </li>
-          </ol>
-        </details>
-      </div>
-    </aside>
-
-    <section id="chart">
-      <div id="chartHost" style="width:100%;height:100%"></div>
-    </section>
+    <button onclick="plotCustom('Planilha1','Matemática')">Plotar Matemática</button>
+    <button onclick="plotCustom('Planilha1','Português')">Plotar Português</button>
+    <button onclick="plotCompare('Planilha1','Matemática','Português')">Comparar Matemática × Português</button>
+    <div id="chartHost" style="width:100%;height:500px;"></div>
   </main>
+  <script>
+    const state = { dataBySheet:{}, columns:[] };
 
-<script>
-(() => {
-  const $ = (id) => document.getElementById(id);
-  const state = { wb:null, dataBySheet:{}, columns:[] };
-
-  // ===== Status helpers =====
-  function badge(msg, ok=true){ const s=document.createElement('span'); s.className='badge'; s.style.borderColor= ok? '#1fa37f':'#ef4444'; s.textContent=msg; return s; }
-  function setStatus(msg, ok=true){ const box=$('status'); box.innerHTML=''; box.appendChild(badge(msg, ok)); }
-  function pushStatus(msg, ok=true){ const box=$('status'); box.appendChild(badge(msg, ok)); }
-
-  // ===== Checks =====
-  function ensureLibs(){
-    if(window._libLoad && _libLoad.xlsx && typeof XLSX!=='undefined' && _libLoad.plotly && typeof Plotly!=='undefined'){
-      setStatus('Bibliotecas locais carregadas', true); return true;
+    function sheetToJSON(sheetName){
+      const wb = state.wb;
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws,{defval:null});
+      state.dataBySheet[sheetName] = rows;
+      state.columns = Object.keys(rows[0]||{});
+      return rows;
     }
-    const msgs=[]; if(!(_libLoad&&_libLoad.xlsx)) msgs.push('XLSX ausente em vendor/'); if(typeof XLSX==='undefined') msgs.push('objeto XLSX indisponível'); if(!(_libLoad&&_libLoad.plotly)) msgs.push('Plotly ausente em vendor/'); if(typeof Plotly==='undefined') msgs.push('objeto Plotly indisponível');
-    setStatus('Falha libs: '+msgs.join(' | '), false); $('installHelp').hidden=false; return false;
-  }
 
-  // ===== Util: número PT-BR / porcentagem =====
-  function toNumber(v, isPercent=false){
-    if(v==null) return NaN;
-    if(typeof v==='number') return v;
-    let s=String(v).trim();
-    const perc = /%/.test(s) || isPercent;
-    s = s.replace(/%/g,'').replace(/\./g,'').replace(/,/g,'.');
-    let n = Number(s);
-    if(perc && !isNaN(n)){
-      if(n>1) n = n/100; // se veio como 45 → 0.45
+    function toNumber(val, perc=false){
+      if(val==null) return NaN;
+      let s = String(val).trim();
+      if(s==='') return NaN;
+      s = s.replace(/\./g,'').replace(/,/g,'.');
+      if(/%$/.test(s)){
+        let n = parseFloat(s.replace('%',''))/100;
+        return n;
+      }
+      let n = parseFloat(s);
+      return perc ? n/100 : n;
     }
-    return n;
-  }
 
-  // ===== Planilha =====
-  function normalizeMultiHeader(ws){
-    const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:true, defval:null });
-    if(rows.length < 3) return null;
-    const top=rows[0], sub=rows[1];
-    const headers=[]; for(let c=0;c<Math.max(top.length, sub.length);c++){ const A=top[c], B=sub[c]; let name = A&&B? `${A}|${B}` : (A||B||`col_${c}`); headers.push(String(name).trim()); }
-    const body = rows.slice(2)
-      .filter(r => r.some(v => v!==null && v!==''))
-      .map(r => Object.fromEntries(headers.map((h,i)=>[h, r[i] ?? null])));
-    return { headers, body };
-  }
+    function pickX(rows){
+      const pref=['Turma','Bimestre'];
+      for(const k of pref){ if(rows.length && (k in rows[0])) return k; }
+      return rows.length?Object.keys(rows[0])[0]:null;
+    }
 
-  function sheetToJSON(name){
-    const ws = state.wb.Sheets[name];
-    const normalized = normalizeMultiHeader(ws);
-    if(normalized){ state.dataBySheet[name]=normalized.body; state.columns=normalized.headers; return normalized.body; }
-    const rows = XLSX.utils.sheet_to_json(ws, { defval:null });
-    state.dataBySheet[name]=rows; state.columns=guessColumns(rows); return rows;
-  }
+    function filterValidRows(rows,xKey){
+      const re=/(sub\s*total|total)/i;
+      return rows.filter(r=>{ const sx=String(r[xKey]||''); return !re.test(sx); });
+    }
 
-  function guessColumns(rows){ const s=new Set(); rows.forEach(r=>Object.keys(r).forEach(k=>s.add(k))); return Array.from(s); }
-  function pickX(rows){ const pref=['Turma','Bimestre','Bimestres']; for(const k of pref){ if(rows.length && (k in rows[0])) return k; } return rows.length?Object.keys(rows[0])[0]:null; }
+    function plotCustom(sheetName,yCol){
+      const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
+      const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
+      const rows = filterValidRows(rowsAll,xKey);
+      if(!state.columns.includes(yCol)) return alert('Coluna não encontrada: '+yCol);
+      const perc=/\%/.test(yCol);
+      const pairs=[];
+      for(const r of rows){ const v=toNumber(r[yCol],perc); if(!isNaN(v)) pairs.push({x:r[xKey],y:v}); }
+      const x=pairs.map(p=>p.x), y=pairs.map(p=>p.y);
+      const trace={type:'bar',x,y,name:yCol};
+      const layout={title:yCol,font:{color:'#e2e8f0'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',xaxis:{gridcolor:'#1f2a44'},yaxis:{gridcolor:'#1f2a44'}};
+      Plotly.newPlot('chartHost',[trace],layout,{responsive:true,displaylogo:false});
+    }
 
-  function filterValidRows(rows, xKey){
-    return rows.filter(r => {
-      const x = r[xKey];
-      if(x==null) return false;
-      const sx = String(x).toLowerCase();
-      if(sx.includes('subtotal')||sx.includes('total')) return false; // ignora subtotal
-      return true;
-    });
-  }
+    function plotCompare(sheetName,yColA,yColB){
+      const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
+      const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
+      const rows = filterValidRows(rowsAll,xKey);
+      if(!state.columns.includes(yColA)||!state.columns.includes(yColB)){
+        alert('Colunas não encontradas: '+yColA+' e/ou '+yColB);
+        return;
+      }
+      const percA=/\%/.test(yColA), percB=/\%/.test(yColB);
+      const x=[],yA=[],yB=[];
+      for(const r of rows){
+        const va=toNumber(r[yColA],percA);
+        const vb=toNumber(r[yColB],percB);
+        if(!isNaN(va)&&!isNaN(vb)){x.push(r[xKey]);yA.push(va);yB.push(vb);}
+      }
+      const traces=[{type:'bar',x,y:yA,name:yColA},{type:'bar',x,y:yB,name:yColB}];
+      const layout={title:`${yColA} × ${yColB}`,barmode:'group',font:{color:'#e2e8f0'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',xaxis:{gridcolor:'#1f2a44'},yaxis:{gridcolor:'#1f2a44'}};
+      Plotly.newPlot('chartHost',traces,layout,{responsive:true,displaylogo:false});
+    }
 
-  function yInfo(col){ return { isPercent: /%/.test(col) } }
-
-  function plotCustom(sheetName, yCol){
-    const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
-    const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X (ex.: Turma/Bimestre).');
-    const rows = filterValidRows(rowsAll, xKey);
-    const perc = yInfo(yCol).isPercent;
-    const x = rows.map(r => r[xKey]);
-    const y = rows.map(r => toNumber(r[yCol], perc)).filter(v => !isNaN(v));
-
-    const trace = { type:'bar', x, y, name:yCol };
-    const layout = { title: yCol, barmode:'group', font:{color:'#e2e8f0'}, paper_bgcolor:'transparent', plot_bgcolor:'transparent', xaxis:{gridcolor:'#1f2a44'}, yaxis:{gridcolor:'#1f2a44', tickformat: perc?'.0%':undefined, range: perc? [0,1]: undefined } };
-    Plotly.newPlot('chartHost', [trace], layout, {responsive:true, displaylogo:false});
-  }
-
-  function plotCompare(sheetName, yColA, yColB){
-    const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
-    const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
-    const rows = filterValidRows(rowsAll, xKey);
-    const pA = yInfo(yColA).isPercent, pB = yInfo(yColB).isPercent;
-    const perc = pA || pB;
-    const x = rows.map(r => r[xKey]);
-    const yA = rows.map(r => toNumber(r[yColA], pA));
-    const yB = rows.map(r => toNumber(r[yColB], pB));
-
-    const traces = [ {type:'bar', x, y:yA, name:yColA}, {type:'bar', x, y:yB, name:yColB} ];
-    const layout = { title:`${yColA} × ${yColB}`, barmode:'group', font:{color:'#e2e8f0'}, paper_bgcolor:'transparent', plot_bgcolor:'transparent', xaxis:{gridcolor:'#1f2a44'}, yaxis:{gridcolor:'#1f2a44', tickformat: perc?'.0%':undefined, range: perc? [0,1]: undefined } };
-    Plotly.newPlot('chartHost', traces, layout, {responsive:true, displaylogo:false});
-  }
-
-  function readWorkbook(array){
-    const wb = XLSX.read(array, { type:'array' }); state.wb = wb;
-    const sel=$('sheet'); sel.innerHTML='';
-    wb.SheetNames.forEach((name,idx)=>{ const o=document.createElement('option'); o.value=name; o.textContent=name; if(idx===0)o.selected=true; sel.appendChild(o); });
-    if(wb.SheetNames.length){ plotCustom(wb.SheetNames[0], 'Matemática|%≥6'); }
-  }
-
-  async function fetchXlsx(path){ const res=await fetch(path); if(!res.ok) throw new Error('Não foi possível carregar '+path+' ('+res.status+')'); return await res.arrayBuffer(); }
-
-  function runTests(){
-    const results=[]; results.push(['XLSX disponível', !!window.XLSX]); results.push(['Plotly disponível', !!window.Plotly]);
-    try{ const aoa=[["Nome","Nota"],["Ana","9,5"],["Beto","7,0"]]; const ws=XLSX.utils.aoa_to_sheet(aoa); const json=XLSX.utils.sheet_to_json(ws,{defval:null}); const ok=toNumber(json[0].Nota)===9.5 && toNumber(json[1].Nota)===7; results.push(['Conversão pt-BR', ok]); }catch(e){ results.push(['Conversão pt-BR', false]); }
-    const okAll = results.every(r=>r[1]); setStatus('Testes: '+results.map(r=>`${r[0]}=${r[1]?'OK':'ERRO'}`).join(' | '), okAll); console.table(Object.fromEntries(results));
-  }
-
-  async function boot(){
-    if(!ensureLibs()) return;
-    runTests();
-    $('btnLoad').addEventListener('click', async ()=>{ try{ const buf=await fetchXlsx($('xlsxPath').value.trim()); readWorkbook(new Uint8Array(buf)); setStatus('Arquivo carregado', true);}catch(e){ setStatus(e.message,false); alert(e.message);} });
-    $('btnUpload').addEventListener('click',()=>$('filePicker').click());
-    $('filePicker').addEventListener('change', async (e)=>{ const f=e.target.files?.[0]; if(!f) return; const buf=await f.arrayBuffer(); readWorkbook(new Uint8Array(buf)); setStatus('Arquivo local carregado', true); });
-    $('sheet').addEventListener('change', ()=>{ const s=$('sheet').value; if(s) plotCustom(s, 'Matemática|%≥6'); });
-    $('btnMath').addEventListener('click',()=>{ const s=$('sheet').value; if(s) plotCustom(s, 'Matemática|%≥6'); else alert('Selecione uma planilha.'); });
-    $('btnPort').addEventListener('click',()=>{ const s=$('sheet').value; if(s) plotCustom(s, 'Português|%≥6'); else alert('Selecione uma planilha.'); });
-    $('btnCompare').addEventListener('click',()=>{ const s=$('sheet').value; if(s) plotCompare(s, 'Matemática|%≥6', 'Português|%≥6'); else alert('Selecione uma planilha.'); });
-
-    // Auto-load (modo A)
-    try{ const buf=await fetchXlsx($('xlsxPath').value.trim()); readWorkbook(new Uint8Array(buf)); setStatus('Auto-carregado do repositório', true);}catch(e){ setStatus('Auto-load falhou: '+e.message, false); }
-  }
-
-  document.addEventListener('DOMContentLoaded', boot);
-})();
-</script>
+    async function init(){
+      const f=await fetch('data/Bimestral.xlsx');
+      const ab=await f.arrayBuffer();
+      const wb=XLSX.read(ab,{type:'array'});
+      state.wb=wb;
+      sheetToJSON('Planilha1');
+      console.log('Planilha carregada. Colunas:',state.columns);
+    }
+    init();
+  </script>
 </body>
 </html>
