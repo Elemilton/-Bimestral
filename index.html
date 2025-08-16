@@ -7,10 +7,13 @@
   <style>
     body{background:#0f172a;color:#e2e8f0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0}
     header{padding:12px 16px;border-bottom:1px solid #1e293b;display:flex;gap:8px;align-items:center}
-    button{margin:6px 8px;padding:8px 12px;border-radius:10px;border:1px solid #0ea5e9;background:#0284c7;color:white;cursor:pointer}
+    button{margin:6px 8px;padding:8px 12px;border-radius:10px;border:1px solid #0ea5e9;background:#0284c7;color:white;cursor:pointer;transition:.2s}
     button.secondary{background:#1e293b;border:1px solid #64748b;color:#e2e8f0}
+    button:hover{opacity:.9;transform:translateY(-2px)}
     #chartHost{width:100%;height:520px;margin:16px auto}
     .container{max-width:1200px;margin:0 auto;padding:0 12px}
+    #filters{margin:12px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    #themeToggle{margin-left:auto}
   </style>
   <noscript>
     <style>main{display:none}</style>
@@ -24,6 +27,7 @@
   <header class="container">
     <div style="font-weight:700">Gran Cursos Online</div>
     <div id="status" style="margin-left:auto;font-size:12px;opacity:.8"></div>
+    <button id="themeToggle" class="secondary">Alternar Tema</button>
   </header>
   <main class="container">
     <div>
@@ -35,11 +39,14 @@
       <button id="btnMatDet" class="secondary">Matemática (Qnt + faixas + %)</button>
       <button id="btnPorDet" class="secondary">Português (Qnt + faixas + %)</button>
     </div>
+    <div id="filters">
+      <label>Bimestre: <select id="bimFilter"><option value="">Todos</option></select></label>
+    </div>
     <div id="chartHost"></div>
   </main>
 
   <script>
-  const state = { wb:null, firstSheet:null, dataBySheet:{}, columns:[] };
+  const state = { wb:null, firstSheet:null, dataBySheet:{}, columns:[], dark:true };
   const setStatus = (msg) => document.getElementById('status').textContent = msg;
 
   function toNumber(val, isPercent=false){
@@ -82,10 +89,16 @@
     return keys[0] || null;
   }
 
+  function filterByBim(rows, xKey){
+    const bim = document.getElementById('bimFilter').value;
+    if(!bim) return rows;
+    return rows.filter(r => String(r[xKey])===bim);
+  }
+
   function plotCustom(sheetName, yCol){
     const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
     const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
-    const rows = filterValidRows(rowsAll, xKey);
+    const rows = filterByBim(filterValidRows(rowsAll, xKey), xKey);
     if(!state.columns.includes(yCol)) return alert('Coluna não encontrada: '+yCol);
 
     const pairs=[]; for(const r of rows){ const y=toNumber(r[yCol], true); if(!isNaN(y)) pairs.push({x:r[xKey], y}); }
@@ -95,19 +108,14 @@
       type:'bar', x, y, name:yCol, marker:{color:'#3b82f6'},
       text: y.map(v => (v*100).toFixed(1) + '%'), textposition:'outside'
     };
-    const layout = {
-      title: yCol, font:{color:'#e2e8f0'},
-      paper_bgcolor:'transparent', plot_bgcolor:'transparent',
-      xaxis:{ gridcolor:'#1f2a44', title:xKey },
-      yaxis:{ gridcolor:'#1f2a44', tickformat:'.0%', range:[0,1], title:'% ≥6' }
-    };
+    const layout = baseLayout(yCol, xKey, '% ≥6');
     Plotly.newPlot('chartHost', [trace], layout, {responsive:true, displaylogo:false});
   }
 
   function plotCompare(sheetName, yColA, yColB){
     const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
     const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
-    const rows = filterValidRows(rowsAll, xKey);
+    const rows = filterByBim(filterValidRows(rowsAll, xKey), xKey);
     if(!state.columns.includes(yColA) || !state.columns.includes(yColB)){
       return alert('Colunas não encontradas: '+yColA+' e/ou '+yColB);
     }
@@ -120,26 +128,19 @@
       {type:'bar', x, y:yA, name:yColA, marker:{color:'#3b82f6'}, text: yA.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'},
       {type:'bar', x, y:yB, name:yColB, marker:{color:'#f59e0b'}, text: yB.map(v=>(v*100).toFixed(1)+'%'), textposition:'outside'}
     ];
-    const layout = {
-      barmode:'group',
-      title:`${yColA} × ${yColB}`, font:{color:'#e2e8f0'},
-      paper_bgcolor:'transparent', plot_bgcolor:'transparent',
-      xaxis:{ gridcolor:'#1f2a44', title:xKey },
-      yaxis:{ gridcolor:'#1f2a44', tickformat:'.0%', range:[0,1], title:'% ≥6' }
-    };
+    const layout = baseLayout(`${yColA} × ${yColB}`, xKey, '% ≥6', true);
     Plotly.newPlot('chartHost', traces, layout, {responsive:true, displaylogo:false});
   }
 
-  // ====== PLOT DETALHADO (Qnt + faixas + % com eixo secundário) ======
   function plotSubjectDetailed(sheetName, subject){
     const rowsAll = state.dataBySheet[sheetName] || sheetToJSON(sheetName);
     const xKey = pickX(rowsAll); if(!xKey) return alert('Não encontrei coluna para eixo X.');
-    const rows = filterValidRows(rowsAll, xKey);
+    const rows = filterByBim(filterValidRows(rowsAll, xKey), xKey);
 
     const cols = new Set(state.columns.map(c => String(c)));
     const has = (name) => Array.from(cols).some(c => c.toLowerCase() === name.toLowerCase());
 
-    const qntKey   = has('Qnt') ? 'Qnt' : Array.from(cols).find(c => new RegExp(`^${subject}\\|?qnt$`, 'i').test(c));
+    const qntKey   = has('Qnt') ? 'Qnt' : Array.from(cols).find(c => new RegExp(`^${subject}\|?qnt$`, 'i').test(c));
     const bandKeys = [`${subject}|M<5`, `${subject}|5≤M<6`, `${subject}|M≥6`].filter(has);
     const percKeys = [`${subject}|%<5`, `${subject}|5≤%<6`, `${subject}|%≥6`].filter(has);
 
@@ -166,17 +167,31 @@
 
     if(!traces.length){ alert('Não encontrei colunas para '+subject); return; }
 
-    const layout = {
-      title: subject, barmode:'group', font:{color:'#e2e8f0'},
-      paper_bgcolor:'transparent', plot_bgcolor:'transparent',
+    const layout = baseLayout(subject, xKey, 'Percentual', true, true);
+    Plotly.newPlot('chartHost', traces, layout, {responsive:true, displaylogo:false});
+  }
+
+  function baseLayout(title, xKey, yTitle, grouped=false, dual=false){
+    const bg = state.dark ? '#0f172a' : '#ffffff';
+    const fg = state.dark ? '#e2e8f0' : '#1e293b';
+    return {
+      title, barmode: grouped?'group':'stack', font:{color:fg},
+      paper_bgcolor:bg, plot_bgcolor:bg,
       xaxis:{ gridcolor:'#1f2a44', title:xKey },
-      yaxis:{ gridcolor:'#1f2a44', title:'Quantidade' },
-      yaxis2:{ gridcolor:'#1f2a44', overlaying:'y', side:'right', tickformat:'.0%', range:[0,1], title:'Percentual' },
+      yaxis:{ gridcolor:'#1f2a44', title:yTitle },
+      yaxis2: dual? { gridcolor:'#1f2a44', overlaying:'y', side:'right', tickformat:'.0%', range:[0,1], title:'Percentual' } : undefined,
       legend:{orientation:'h', x:0, y:1.12},
       margin:{l:60,r:60,t:60,b:60}
     };
+  }
 
-    Plotly.newPlot('chartHost', traces, layout, {responsive:true, displaylogo:false});
+  function populateFilters(rows, xKey){
+    const sel = document.getElementById('bimFilter');
+    const values = [...new Set(rows.map(r=>r[xKey]))];
+    values.forEach(v =>{
+      const opt = document.createElement('option');
+      opt.value=v; opt.textContent=v; sel.appendChild(opt);
+    });
   }
 
   async function init(){
@@ -186,7 +201,8 @@
       const ab = await res.arrayBuffer();
       state.wb = XLSX.read(ab, { type:'array' });
       state.firstSheet = state.wb.SheetNames[0];
-      sheetToJSON(state.firstSheet);
+      const rows = sheetToJSON(state.firstSheet);
+      populateFilters(rows, pickX(rows));
       setStatus('Aba: '+state.firstSheet+' | Colunas: '+state.columns.slice(0,6).join(', ')+(state.columns.length>6?'…':''));
     }catch(e){ setStatus('Falha ao carregar planilha: '+e.message); console.error(e); }
   }
@@ -198,6 +214,11 @@
   document.getElementById('btnBioDet').addEventListener('click', ()=> plotSubjectDetailed(state.firstSheet, 'Biologia'));
   document.getElementById('btnMatDet').addEventListener('click', ()=> plotSubjectDetailed(state.firstSheet, 'Matemática'));
   document.getElementById('btnPorDet').addEventListener('click', ()=> plotSubjectDetailed(state.firstSheet, 'Português'));
+
+  document.getElementById('themeToggle').addEventListener('click', ()=>{
+    state.dark=!state.dark; document.body.style.background=state.dark?'#0f172a':'#ffffff';
+    document.body.style.color=state.dark?'#e2e8f0':'#1e293b';
+  });
 
   document.addEventListener('DOMContentLoaded', init);
   </script>
